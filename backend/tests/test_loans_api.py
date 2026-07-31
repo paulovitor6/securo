@@ -235,3 +235,73 @@ async def test_existing_transactions_are_retroactively_reconciled_on_loan_update
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["installments_paid"] == 1
+
+
+@pytest.mark.asyncio
+async def test_installments_expose_real_paid_amount_next_to_estimate(
+    client: AsyncClient, auth_headers, test_account: Account, test_categories: list[Category],
+):
+    """The schedule shows both the projected `total_amount` and the actual
+    `paid_amount` of whatever transaction reconciled against it — the real
+    value can differ from the estimate (extra amortization, a fee, a
+    rounding difference on the bank's side)."""
+    payment_category = test_categories[0]
+
+    create_resp = await client.post(
+        "/api/loans",
+        json=_loan_payload(
+            principal_amount=12000, interest_rate=0.01, rate_period="monthly",
+            term_months=12, start_date="2026-08-10",
+            payment_category_id=str(payment_category.id),
+        ),
+        headers=auth_headers,
+    )
+    loan_id = create_resp.json()["details"]["id"]
+
+    installments_before = (await client.get(f"/api/loans/{loan_id}/installments", headers=auth_headers)).json()
+    first = installments_before[0]
+    assert first["paid_amount"] is None
+
+    # Pay a different amount than the schedule projected — plausible if the
+    # bank rounds differently or the user threw in extra amortization.
+    paid_amount = float(first["total_amount"]) + 50
+    await client.post(
+        "/api/transactions",
+        headers=auth_headers,
+        json={
+            "account_id": str(test_account.id),
+            "category_id": str(payment_category.id),
+            "description": "Parcela financiamento",
+            "amount": str(paid_amount),
+            "date": first["due_date"],
+            "type": "debit",
+        },
+    )
+
+    installments_after = (await client.get(f"/api/loans/{loan_id}/installments", headers=auth_headers)).json()
+    reconciled = installments_after[0]
+    assert reconciled["status"] == "paid"
+    assert float(reconciled["paid_amount"]) == paid_amount
+    assert float(reconciled["paid_amount"]) != float(reconciled["total_amount"])
+
+
+@pytest.mark.asyncio
+async def test_manually_marked_paid_installment_has_no_paid_amount(
+    client: AsyncClient, auth_headers,
+):
+    """Manually toggling an installment paid (no linked transaction) leaves
+    `paid_amount` null — there's no real value to show, just the estimate."""
+    create_resp = await client.post("/api/loans", json=_loan_payload(), headers=auth_headers)
+    loan_id = create_resp.json()["details"]["id"]
+    installments = (await client.get(f"/api/loans/{loan_id}/installments", headers=auth_headers)).json()
+    first_id = installments[0]["id"]
+
+    await client.patch(
+        f"/api/loans/{loan_id}/installments/{first_id}",
+        json={"status": "paid", "paid_date": "2026-08-12"},
+        headers=auth_headers,
+    )
+
+    refetched = (await client.get(f"/api/loans/{loan_id}/installments", headers=auth_headers)).json()
+    assert refetched[0]["status"] == "paid"
+    assert refetched[0]["paid_amount"] is None

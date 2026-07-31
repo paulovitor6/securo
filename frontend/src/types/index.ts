@@ -449,6 +449,7 @@ export interface LoanInstallment {
   insurance_amount: number
   admin_fee_amount: number
   total_amount: number
+  paid_amount: number | null
   outstanding_balance_after: number
   status: 'projected' | 'paid'
   paid_date: string | null

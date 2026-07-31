@@ -169,12 +169,20 @@ async def list_installments(
     if details:
         await _ensure_reconciled(session, details)
 
+    # Left join the reconciled transaction so the real amount actually paid
+    # can sit next to the projected `total_amount` estimate.
     result = await session.execute(
-        select(LoanInstallment)
+        select(LoanInstallment, Transaction.amount)
+        .outerjoin(Transaction, LoanInstallment.transaction_id == Transaction.id)
         .where(LoanInstallment.loan_id == loan_id, LoanInstallment.workspace_id == workspace_id)
         .order_by(LoanInstallment.installment_number)
     )
-    return [LoanInstallmentRead.model_validate(i) for i in result.scalars().all()]
+    reads = []
+    for installment, paid_amount in result.all():
+        read = LoanInstallmentRead.model_validate(installment)
+        read.paid_amount = paid_amount
+        reads.append(read)
+    return reads
 
 
 async def _regenerate_schedule(session: AsyncSession, details: LoanDetails) -> None:

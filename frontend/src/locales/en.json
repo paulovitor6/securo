@@ -1172,6 +1172,7 @@
     "amortization": "Amortization",
     "interest": "Interest",
     "total": "Total",
+    "paidAmount": "Paid",
     "balanceAfter": "Balance after",
     "status": "Status",
     "markPaid": "Mark as paid",

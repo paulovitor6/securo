@@ -38,6 +38,9 @@ class LoanInstallmentRead(BaseModel):
     insurance_amount: Decimal
     admin_fee_amount: Decimal
     total_amount: Decimal
+    # Actual amount of the reconciled transaction, next to `total_amount`
+    # (the projected estimate) — None until an installment is paid.
+    paid_amount: Optional[Decimal] = None
     outstanding_balance_after: Decimal
     status: str
     paid_date: Optional[date] = None

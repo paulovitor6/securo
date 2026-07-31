@@ -1172,6 +1172,7 @@
     "amortization": "Amortização",
     "interest": "Juros",
     "total": "Total",
+    "paidAmount": "Pago",
     "balanceAfter": "Saldo após",
     "status": "Status",
     "markPaid": "Marcar como paga",

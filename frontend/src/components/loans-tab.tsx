@@ -394,6 +394,7 @@ function LoanScheduleDetail({ loanId, currency, canWrite }: { loanId: string; cu
               <th className="text-right px-3 py-2 font-medium text-muted-foreground">{t('loans.amortization')}</th>
               <th className="text-right px-3 py-2 font-medium text-muted-foreground">{t('loans.interest')}</th>
               <th className="text-right px-3 py-2 font-medium text-muted-foreground">{t('loans.total')}</th>
+              <th className="text-right px-3 py-2 font-medium text-muted-foreground">{t('loans.paidAmount')}</th>
               <th className="text-right px-3 py-2 font-medium text-muted-foreground hidden sm:table-cell">{t('loans.balanceAfter')}</th>
               {canWrite && <th className="text-center px-3 py-2 font-medium text-muted-foreground">{t('loans.status')}</th>}
             </tr>
@@ -406,6 +407,9 @@ function LoanScheduleDetail({ loanId, currency, canWrite }: { loanId: string; cu
                 <td className="px-3 py-2 text-right tabular-nums">{mask(formatCurrency(row.amortization_amount, currency, locale))}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{mask(formatCurrency(row.interest_amount, currency, locale))}</td>
                 <td className="px-3 py-2 text-right tabular-nums font-medium">{mask(formatCurrency(row.total_amount, currency, locale))}</td>
+                <td className={`px-3 py-2 text-right tabular-nums font-medium ${row.paid_amount != null && row.paid_amount !== row.total_amount ? 'text-amber-600' : ''}`}>
+                  {row.paid_amount != null ? mask(formatCurrency(row.paid_amount, currency, locale)) : '—'}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums hidden sm:table-cell text-muted-foreground">
                   {mask(formatCurrency(row.outstanding_balance_after, currency, locale))}
                 </td>
