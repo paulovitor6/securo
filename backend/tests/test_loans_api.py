@@ -1,6 +1,9 @@
 import pytest
 from httpx import AsyncClient
 
+from app.models.account import Account
+from app.models.category import Category
+
 
 def _loan_payload(**overrides):
     payload = {
@@ -132,3 +135,103 @@ async def test_delete_loan_via_api(client: AsyncClient, auth_headers):
 async def test_unauthenticated_loans_rejected(client: AsyncClient, clean_db):
     response = await client.get("/api/loans")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_existing_transactions_are_retroactively_reconciled_on_loan_create(
+    client: AsyncClient, auth_headers, test_account: Account, test_categories: list[Category],
+):
+    """The realistic flow: the user already has categorized transactions on a
+    checking account (imported/manual, unrelated to any loan), *then* creates
+    the loan and picks that category as its payment category. Existing
+    transactions in that category should retroactively reconcile against the
+    freshly generated schedule — this is what "puxar as transações da
+    categoria de pagamento" means in the UI.
+    """
+    payment_category = test_categories[0]
+
+    tx_resp = await client.post(
+        "/api/transactions",
+        headers=auth_headers,
+        json={
+            "account_id": str(test_account.id),
+            "category_id": str(payment_category.id),
+            "description": "Parcela financiamento agosto",
+            "amount": "1010.00",
+            "date": "2026-08-12",
+            "type": "debit",
+        },
+    )
+    assert tx_resp.status_code == 201
+    transaction_id = tx_resp.json()["id"]
+
+    create_resp = await client.post(
+        "/api/loans",
+        json=_loan_payload(
+            principal_amount=12000, interest_rate=0.01, rate_period="monthly",
+            term_months=12, start_date="2026-08-10",
+            payment_category_id=str(payment_category.id),
+        ),
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 201
+    loan_id = create_resp.json()["details"]["id"]
+
+    # The loan summary should already reflect one paid installment...
+    summary = create_resp.json()
+    assert summary["installments_paid"] == 1
+
+    # ...and the installment itself should point back at the transaction.
+    installments_resp = await client.get(f"/api/loans/{loan_id}/installments", headers=auth_headers)
+    installments = installments_resp.json()
+    paid = [i for i in installments if i["status"] == "paid"]
+    assert len(paid) == 1
+    assert paid[0]["transaction_id"] == transaction_id
+    assert paid[0]["installment_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_transactions_are_retroactively_reconciled_on_loan_update(
+    client: AsyncClient, auth_headers, test_account: Account, test_categories: list[Category],
+):
+    """Same as the create case, but the payment category is only added later
+    via an edit — the most likely real path (create the loan first without
+    knowing the category, then wire it up)."""
+    payment_category = test_categories[0]
+
+    create_resp = await client.post(
+        "/api/loans",
+        json=_loan_payload(
+            principal_amount=12000, interest_rate=0.01, rate_period="monthly",
+            term_months=12, start_date="2026-08-10",
+        ),
+        headers=auth_headers,
+    )
+    loan_id = create_resp.json()["details"]["id"]
+    assert create_resp.json()["installments_paid"] == 0
+
+    tx_resp = await client.post(
+        "/api/transactions",
+        headers=auth_headers,
+        json={
+            "account_id": str(test_account.id),
+            "category_id": str(payment_category.id),
+            "description": "Parcela financiamento agosto",
+            "amount": "1010.00",
+            "date": "2026-08-12",
+            "type": "debit",
+        },
+    )
+    assert tx_resp.status_code == 201
+
+    update_resp = await client.put(
+        f"/api/loans/{loan_id}",
+        json=_loan_payload(
+            principal_amount=12000, interest_rate=0.01, rate_period="monthly",
+            term_months=12, start_date="2026-08-10",
+            payment_category_id=str(payment_category.id),
+        ),
+        headers=auth_headers,
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["installments_paid"] == 1

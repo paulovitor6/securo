@@ -122,6 +122,8 @@ async def _get_details(session: AsyncSession, loan_id: uuid.UUID, workspace_id: 
 
 
 async def _build_summary(session: AsyncSession, details: LoanDetails) -> LoanSummary:
+    await _ensure_reconciled(session, details)
+
     installments_result = await session.execute(
         select(LoanInstallment)
         .where(LoanInstallment.loan_id == details.id)
@@ -163,6 +165,10 @@ async def get_loan_summary(session: AsyncSession, loan_id: uuid.UUID, workspace_
 async def list_installments(
     session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID
 ) -> list[LoanInstallmentRead]:
+    details = await _get_details(session, loan_id, workspace_id)
+    if details:
+        await _ensure_reconciled(session, details)
+
     result = await session.execute(
         select(LoanInstallment)
         .where(LoanInstallment.loan_id == loan_id, LoanInstallment.workspace_id == workspace_id)
@@ -214,7 +220,6 @@ async def create_loan(
     await session.flush()
     await _regenerate_schedule(session, details)
     await session.commit()
-    await reconcile_all_payments(session, details.id, workspace_id)
     return await get_loan_summary(session, details.id, workspace_id)
 
 
@@ -249,7 +254,6 @@ async def update_loan(
 
     await _regenerate_schedule(session, details)
     await session.commit()
-    await reconcile_all_payments(session, loan_id, workspace_id)
     return await get_loan_summary(session, loan_id, workspace_id)
 
 
@@ -294,17 +298,22 @@ async def update_installment(
     return LoanInstallmentRead.model_validate(installment)
 
 
-async def try_reconcile_payment(session: AsyncSession, transaction: Transaction) -> None:
+async def try_reconcile_payment(session: AsyncSession, transaction: Transaction) -> bool:
     """Match a transaction against the next unpaid installment, if it looks like a loan payment.
 
-    Fires after a transaction is created/imported on any account. No amount
-    validation — matches the closest-by-date `projected` installment of
-    whichever loan (in the same workspace) has this transaction's category
-    configured as its payment category. Simple on purpose: this is
-    reconciliation, not enforcement.
+    No amount validation — matches the closest-by-date `projected`
+    installment of whichever loan (in the same workspace) has this
+    transaction's category configured as its payment category. Simple on
+    purpose: this is reconciliation, not enforcement.
+
+    Idempotent: a transaction already linked to some installment is left
+    alone, so this is safe to call repeatedly over the same transaction
+    (which `_ensure_reconciled` does, on every read — see its docstring for
+    why reconciliation lives there and not scattered across every write
+    path). Returns whether it actually changed anything.
     """
     if transaction.category_id is None:
-        return
+        return False
     loan_result = await session.execute(
         select(LoanDetails).where(
             LoanDetails.workspace_id == transaction.workspace_id,
@@ -313,7 +322,13 @@ async def try_reconcile_payment(session: AsyncSession, transaction: Transaction)
     )
     loan = loan_result.scalars().first()
     if loan is None:
-        return
+        return False
+
+    already_linked = await session.execute(
+        select(LoanInstallment.id).where(LoanInstallment.transaction_id == transaction.id)
+    )
+    if already_linked.scalar_one_or_none() is not None:
+        return False
 
     pending_result = await session.execute(
         select(LoanInstallment)
@@ -322,33 +337,52 @@ async def try_reconcile_payment(session: AsyncSession, transaction: Transaction)
     )
     pending = list(pending_result.scalars().all())
     if not pending:
-        return
+        return False
 
     closest = min(pending, key=lambda i: abs((i.due_date - transaction.date).days))
     closest.status = "paid"
     closest.paid_date = transaction.date
     closest.transaction_id = transaction.id
+    return True
 
 
-async def reconcile_all_payments(session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID) -> None:
-    """Re-run reconciliation over every existing transaction that matches this loan's payment category.
+async def _ensure_reconciled(session: AsyncSession, details: LoanDetails) -> bool:
+    """Read-time reconciliation: match transactions in the payment category
+    against still-`projected` installments, every time the loan is read.
 
-    Used after (re)creating the schedule so payment history isn't lost when
-    the loan's characteristics are edited. Scans the whole workspace since a
-    loan payment can come from any account.
+    This used to be a write-time side effect triggered from every place a
+    transaction's category could end up matching (manual entry, CSV/OFX
+    import, bank sync — initial and periodic, recurring-bill materialization,
+    a manual re-categorize, a bulk edit, a rule...). That list was never
+    actually complete — any new or overlooked write path silently skipped
+    reconciliation. Since "is this transaction linked to an installment" is
+    just a query over existing rows, it's simpler and strictly more correct
+    to compute it whenever the loan is viewed instead of chasing every
+    mutation site. Idempotent and cheap enough for this app's scale.
     """
-    details = await _get_details(session, loan_id, workspace_id)
-    if not details or not details.payment_category_id:
-        return
+    if not details.payment_category_id:
+        return False
+
+    pending_exists = await session.execute(
+        select(LoanInstallment.id)
+        .where(LoanInstallment.loan_id == details.id, LoanInstallment.status == "projected")
+        .limit(1)
+    )
+    if pending_exists.scalar_one_or_none() is None:
+        return False  # fully paid off — nothing left to match
 
     tx_result = await session.execute(
         select(Transaction)
-        .where(Transaction.workspace_id == workspace_id, Transaction.category_id == details.payment_category_id)
+        .where(Transaction.workspace_id == details.workspace_id, Transaction.category_id == details.payment_category_id)
         .order_by(Transaction.date)
     )
+    changed = False
     for transaction in tx_result.scalars().all():
-        await try_reconcile_payment(session, transaction)
-    await session.commit()
+        if await try_reconcile_payment(session, transaction):
+            changed = True
+    if changed:
+        await session.commit()
+    return changed
 
 
 async def import_loans_csv(
