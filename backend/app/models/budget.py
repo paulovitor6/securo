@@ -26,7 +26,7 @@ class Budget(Base):
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
     )
-    category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("categories.id"))
+    category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="CASCADE"))
     amount: Mapped[Decimal] = mapped_column(Numeric(precision=15, scale=2))
     month: Mapped[date] = mapped_column(Date)  # First day of month
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

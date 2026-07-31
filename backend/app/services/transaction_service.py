@@ -723,6 +723,10 @@ async def create_transaction(
     if data.splits is not None:
         await split_service.replace_splits(session, transaction, data.splits, user_id)
 
+    if account.type == "loan":
+        from app.services import loan_service
+        await loan_service.try_reconcile_payment(session, account, transaction)
+
     await session.commit()
     await session.refresh(transaction, ["category", "splits"])
     return transaction

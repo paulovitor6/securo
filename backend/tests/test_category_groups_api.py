@@ -68,4 +68,4 @@ async def test_delete_group_not_found(client: AsyncClient, auth_headers):
     response = await client.delete(
         f"/api/category-groups/{uuid.uuid4()}", headers=auth_headers,
     )
-    assert response.status_code == 400
+    assert response.status_code == 404

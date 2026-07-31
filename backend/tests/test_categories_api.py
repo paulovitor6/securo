@@ -99,12 +99,17 @@ async def test_delete_category(client: AsyncClient, auth_headers, test_categorie
 
 
 @pytest.mark.asyncio
-async def test_delete_system_category_fails(
+async def test_delete_system_category_succeeds(
     client: AsyncClient, auth_headers, test_categories: list[Category]
 ):
+    """System categories are deletable too — the default set is a starting point,
+    not a fixed inventory (issue: editable/deletable default categories)."""
     cat_id = str(test_categories[0].id)  # system category
     response = await client.delete(f"/api/categories/{cat_id}", headers=auth_headers)
-    assert response.status_code == 400
+    assert response.status_code == 204
+
+    response = await client.get("/api/categories", headers=auth_headers)
+    assert cat_id not in {c["id"] for c in response.json()}
 
 
 @pytest.mark.asyncio

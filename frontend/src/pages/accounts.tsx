@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
-import { accounts, connections, currencies } from '@/lib/api'
+import { accounts, connections, currencies, categories as categoriesApi, loans as loansApi } from '@/lib/api'
 import { localDateString } from '@/lib/date-utils'
 import { invalidateFinancialQueries } from '@/lib/invalidate-queries'
 import { toast } from 'sonner'
@@ -47,7 +47,20 @@ const ACCOUNT_TYPE_OPTIONS = [
   { value: 'credit_card', labelKey: 'accounts.typeCreditCard' },
   { value: 'investment', labelKey: 'accounts.typeInvestment' },
   { value: 'wallet', labelKey: 'accounts.typeWallet' },
+  { value: 'loan', labelKey: 'accounts.typeLoan' },
 ] as const
+
+interface LoanFormData {
+  principal_amount: number
+  interest_rate: number
+  rate_period: 'annual' | 'monthly'
+  amortization_system: 'sac' | 'price'
+  term_months: number
+  start_date: string
+  insurance_monthly?: number | null
+  admin_fee_monthly?: number | null
+  payment_category_id?: string | null
+}
 
 function formatCurrency(value: number, currency = 'USD', locale = 'en-US') {
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(value)
@@ -82,6 +95,8 @@ export default function AccountsPage() {
   const [reconnectConnId, setReconnectConnId] = useState<string | null>(null)
   const [reconnectItemId, setReconnectItemId] = useState<string | null>(null)
   const [tokenReconnectConnection, setTokenReconnectConnection] = useState<BankConnection | null>(null)
+  const [importLoanOpen, setImportLoanOpen] = useState(false)
+  const [importLoanFile, setImportLoanFile] = useState<File | null>(null)
 
   const { data: accountsList, isLoading: accountsLoading } = useQuery({
     queryKey: ['accounts'],
@@ -166,10 +181,19 @@ export default function AccountsPage() {
     },
   })
 
+  const saveLoanDetails = async (accountId: string, loan: LoanFormData) => {
+    try {
+      await loansApi.save(accountId, loan)
+    } catch {
+      toast.error(t('accounts.loanSaveError'))
+    }
+  }
+
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; type: string; balance?: number; currency?: string }) =>
-      accounts.create(data),
-    onSuccess: () => {
+    mutationFn: ({ loan, ...data }: { name: string; type: string; balance?: number; currency?: string; loan?: LoanFormData }) =>
+      accounts.create(data).then((account) => ({ account, loan })),
+    onSuccess: async ({ account, loan }) => {
+      if (loan) await saveLoanDetails(account.id, loan)
       invalidateFinancialQueries(queryClient)
       setDialogOpen(false)
       toast.success(t('accounts.created'))
@@ -178,9 +202,10 @@ export default function AccountsPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...data }: Partial<Account> & { id: string }) =>
-      accounts.update(id, data),
-    onSuccess: () => {
+    mutationFn: ({ id, loan, ...data }: Partial<Account> & { id: string; loan?: LoanFormData }) =>
+      accounts.update(id, data).then((account) => ({ account, loan })),
+    onSuccess: async ({ account, loan }) => {
+      if (loan) await saveLoanDetails(account.id, loan)
       invalidateFinancialQueries(queryClient)
       setDialogOpen(false)
       setEditingAccount(null)
@@ -196,6 +221,21 @@ export default function AccountsPage() {
       queryClient.invalidateQueries({ queryKey: ['import-logs'] })
       setDeletingId(null)
       toast.success(t('accounts.deleted'))
+    },
+    onError: () => toast.error(t('common.error')),
+  })
+
+  const importLoanMutation = useMutation({
+    mutationFn: () => loansApi.importFile(importLoanFile!),
+    onSuccess: (data) => {
+      invalidateFinancialQueries(queryClient)
+      setImportLoanOpen(false)
+      setImportLoanFile(null)
+      if (data.errors.length > 0) {
+        toast.warning(t('accounts.loanImportPartial', { created: data.created, updated: data.updated, errors: data.errors.length }))
+      } else {
+        toast.success(t('accounts.loanImportSuccess', { created: data.created, updated: data.updated }))
+      }
     },
     onError: () => toast.error(t('common.error')),
   })
@@ -234,6 +274,7 @@ export default function AccountsPage() {
             onAddAccount={() => { setEditingAccount(null); setDialogOpen(true) }}
             onConnectBank={() => setConnectorSelectOpen(true)}
             onOpenCollections={() => navigate('/collections')}
+            onImportLoan={() => setImportLoanOpen(true)}
           />
         }
       />
@@ -642,11 +683,60 @@ export default function AccountsPage() {
           if (editingAccount) {
             updateMutation.mutate({ id: editingAccount.id, ...data })
           } else {
-            createMutation.mutate(data as { name: string; type: string; balance?: number; balance_date?: string; currency?: string })
+            createMutation.mutate(data as { name: string; type: string; balance?: number; balance_date?: string; currency?: string; loan?: LoanFormData })
           }
         }}
         loading={createMutation.isPending || updateMutation.isPending}
       />
+
+      {/* Import loan (financing) CSV */}
+      <Dialog open={importLoanOpen} onOpenChange={(open) => { if (!open) { setImportLoanOpen(false); setImportLoanFile(null) } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('accounts.importLoan')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t('accounts.importLoanHint')}</p>
+            <button
+              type="button"
+              className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+              onClick={() => {
+                const csv = 'account_name,principal_amount,interest_rate,rate_period,amortization_system,term_months,start_date,insurance_monthly,admin_fee_monthly,payment_category_name,currency\n'
+                  + 'Financiamento Apto,300000,10.5,annual,sac,360,2026-08-10,45.00,25.00,Moradia,BRL\n'
+                const blob = new Blob([csv], { type: 'text/csv' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = 'securo-loans-template.csv'
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              {t('import.downloadTemplate')}
+            </button>
+            <div className="space-y-2">
+              <Label>{t('assets.importFile')}</Label>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setImportLoanFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-muted file:text-foreground file:text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setImportLoanOpen(false); setImportLoanFile(null) }}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              onClick={() => importLoanMutation.mutate()}
+              disabled={!importLoanFile || importLoanMutation.isPending}
+            >
+              {importLoanMutation.isPending ? t('common.loading') : t('import.title')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -671,6 +761,7 @@ function AccountDialog({
     credit_limit?: number | null
     statement_close_day?: number | null
     payment_due_day?: number | null
+    loan?: LoanFormData
   }) => void
   loading: boolean
 }) {
@@ -692,6 +783,30 @@ function AccountDialog({
   const [statementCloseDay, setStatementCloseDay] = useState(account?.statement_close_day?.toString() ?? '')
   const [paymentDueDay, setPaymentDueDay] = useState(account?.payment_due_day?.toString() ?? '')
 
+  // Loan (financing) fields — persisted separately via loansApi.save after the
+  // account itself is created/updated (see accounts.tsx's createMutation/updateMutation).
+  const [loanPrincipal, setLoanPrincipal] = useState('')
+  const [loanRate, setLoanRate] = useState('')
+  const [loanRatePeriod, setLoanRatePeriod] = useState<'annual' | 'monthly'>('annual')
+  const [loanSystem, setLoanSystem] = useState<'sac' | 'price'>('sac')
+  const [loanTermMonths, setLoanTermMonths] = useState('')
+  const [loanStartDate, setLoanStartDate] = useState(localDateString())
+  const [loanInsurance, setLoanInsurance] = useState('')
+  const [loanAdminFee, setLoanAdminFee] = useState('')
+  const [loanPaymentCategoryId, setLoanPaymentCategoryId] = useState('')
+
+  const { data: categoriesList } = useQuery({
+    queryKey: ['categories'],
+    queryFn: categoriesApi.list,
+    enabled: type === 'loan',
+  })
+
+  const { data: existingLoan } = useQuery({
+    queryKey: ['loan', account?.id],
+    queryFn: () => loansApi.get(account!.id),
+    enabled: !!account && account.type === 'loan',
+  })
+
   useEffect(() => {
     setName(account?.name ?? '')
     setDisplayName(account?.display_name ?? '')
@@ -703,6 +818,20 @@ function AccountDialog({
     setStatementCloseDay(account?.statement_close_day?.toString() ?? '')
     setPaymentDueDay(account?.payment_due_day?.toString() ?? '')
   }, [account])
+
+  useEffect(() => {
+    if (!existingLoan) return
+    const d = existingLoan.details
+    setLoanPrincipal(d.principal_amount.toString())
+    setLoanRate(d.interest_rate.toString())
+    setLoanRatePeriod(d.rate_period)
+    setLoanSystem(d.amortization_system)
+    setLoanTermMonths(d.term_months.toString())
+    setLoanStartDate(d.start_date)
+    setLoanInsurance(d.insurance_monthly?.toString() ?? '')
+    setLoanAdminFee(d.admin_fee_monthly?.toString() ?? '')
+    setLoanPaymentCategoryId(d.payment_category_id ?? '')
+  }, [existingLoan])
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -717,19 +846,38 @@ function AccountDialog({
           onSubmit={(e) => {
             e.preventDefault()
             const isCC = type === 'credit_card'
+            const isLoan = type === 'loan'
             const parseDay = (v: string) => {
               const n = parseInt(v, 10)
               return Number.isFinite(n) && n >= 1 && n <= 31 ? n : null
             }
             const isConnected = !!account?.connection_id
             onSave({
-              ...(!isConnected && { name, balance: parseFloat(balance), balance_date: balanceDate, currency }),
+              ...(!isConnected && {
+                name,
+                balance: isLoan ? parseFloat(loanPrincipal || '0') : parseFloat(balance),
+                balance_date: balanceDate,
+                currency,
+              }),
               type,
               display_name: displayName.trim() || null,
               ...(isCC && {
                 credit_limit: creditLimit !== '' ? parseFloat(creditLimit) : null,
                 statement_close_day: parseDay(statementCloseDay),
                 payment_due_day: parseDay(paymentDueDay),
+              }),
+              ...(isLoan && {
+                loan: {
+                  principal_amount: parseFloat(loanPrincipal || '0'),
+                  interest_rate: parseFloat(loanRate || '0') / 100,
+                  rate_period: loanRatePeriod,
+                  amortization_system: loanSystem,
+                  term_months: parseInt(loanTermMonths || '0', 10),
+                  start_date: loanStartDate,
+                  insurance_monthly: loanInsurance !== '' ? parseFloat(loanInsurance) : null,
+                  admin_fee_monthly: loanAdminFee !== '' ? parseFloat(loanAdminFee) : null,
+                  payment_category_id: loanPaymentCategoryId || null,
+                },
               }),
             })
           }}
@@ -793,30 +941,32 @@ function AccountDialog({
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>
-                    {type === 'credit_card'
-                      ? t('accounts.balanceCreditCard')
-                      : t('accounts.balance')}
-                  </Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={type === 'credit_card' ? '0' : undefined}
-                    value={balance}
-                    onChange={(e) => setBalance(e.target.value)}
-                  />
+              {type !== 'loan' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>
+                      {type === 'credit_card'
+                        ? t('accounts.balanceCreditCard')
+                        : t('accounts.balance')}
+                    </Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={type === 'credit_card' ? '0' : undefined}
+                      value={balance}
+                      onChange={(e) => setBalance(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('accounts.balanceDate')}</Label>
+                    <DatePickerInput
+                      value={balanceDate}
+                      onChange={setBalanceDate}
+                      className="w-full justify-start"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>{t('accounts.balanceDate')}</Label>
-                  <DatePickerInput
-                    value={balanceDate}
-                    onChange={setBalanceDate}
-                    className="w-full justify-start"
-                  />
-                </div>
-              </div>
+              )}
               {type === 'credit_card' && (
                 <p className="text-xs text-muted-foreground -mt-2">
                   {t('accounts.balanceCreditCardHint')}
@@ -860,6 +1010,117 @@ function AccountDialog({
                     placeholder={t('accounts.dayOfMonthHint')}
                   />
                 </div>
+              </div>
+            </div>
+          )}
+          {type === 'loan' && (
+            <div className="space-y-4 rounded-lg border border-border bg-muted/30 p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanPrincipal')}</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={loanPrincipal}
+                    onChange={(e) => setLoanPrincipal(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanTermMonths')}</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={loanTermMonths}
+                    onChange={(e) => setLoanTermMonths(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanRate')}</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={loanRate}
+                    onChange={(e) => setLoanRate(e.target.value)}
+                    placeholder="10.5"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanRatePeriod')}</Label>
+                  <select
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={loanRatePeriod}
+                    onChange={(e) => setLoanRatePeriod(e.target.value as 'annual' | 'monthly')}
+                  >
+                    <option value="annual">{t('accounts.loanRateAnnual')}</option>
+                    <option value="monthly">{t('accounts.loanRateMonthly')}</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanSystem')}</Label>
+                  <select
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={loanSystem}
+                    onChange={(e) => setLoanSystem(e.target.value as 'sac' | 'price')}
+                  >
+                    <option value="sac">{t('accounts.loanSystemSac')}</option>
+                    <option value="price">{t('accounts.loanSystemPrice')}</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanStartDate')}</Label>
+                  <DatePickerInput
+                    value={loanStartDate}
+                    onChange={setLoanStartDate}
+                    className="w-full justify-start"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanInsurance')}</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={loanInsurance}
+                    onChange={(e) => setLoanInsurance(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.loanAdminFee')}</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={loanAdminFee}
+                    onChange={(e) => setLoanAdminFee(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('accounts.loanPaymentCategory')}</Label>
+                <select
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  value={loanPaymentCategoryId}
+                  onChange={(e) => setLoanPaymentCategoryId(e.target.value)}
+                >
+                  <option value="">{t('accounts.loanPaymentCategoryNone')}</option>
+                  {categoriesList?.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">{t('accounts.loanPaymentCategoryHint')}</p>
               </div>
             </div>
           )}

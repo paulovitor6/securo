@@ -385,6 +385,101 @@ export interface RuleImportResponse {
   overwritten: number
 }
 
+export interface CategoryGroupExportItem {
+  name: string
+  icon: string
+  color: string
+  position: number
+}
+
+export interface CategoryExportItem {
+  name: string
+  icon: string
+  color: string
+  group_name: string | null
+  treat_as_transfer: boolean
+  is_ignored: boolean
+}
+
+export interface CategoryExportPayload {
+  format: 'securo-categories'
+  version: number
+  groups: CategoryGroupExportItem[]
+  categories: CategoryExportItem[]
+}
+
+export interface CategoryImportResponse {
+  groups_created: number
+  categories_imported: number
+  categories_updated: number
+  categories_skipped: number
+}
+
+export interface AssetImportResult {
+  created: number
+  updated: number
+  values_recorded: number
+  errors: { row: number; message: string }[]
+}
+
+export interface LoanDetails {
+  id: string
+  account_id: string
+  principal_amount: number
+  interest_rate: number
+  rate_period: 'annual' | 'monthly'
+  amortization_system: 'sac' | 'price'
+  term_months: number
+  start_date: string
+  insurance_monthly: number | null
+  admin_fee_monthly: number | null
+  payment_category_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LoanInstallment {
+  id: string
+  installment_number: number
+  due_date: string
+  amortization_amount: number
+  interest_amount: number
+  insurance_amount: number
+  admin_fee_amount: number
+  total_amount: number
+  outstanding_balance_after: number
+  status: 'projected' | 'paid'
+  paid_date: string | null
+  transaction_id: string | null
+}
+
+export interface LoanSummary {
+  details: LoanDetails
+  outstanding_balance: number
+  installments_paid: number
+  installments_total: number
+  next_installment: LoanInstallment | null
+}
+
+export interface LoanImportResult {
+  created: number
+  updated: number
+  errors: { row: number; message: string }[]
+}
+
+export interface ImportTemplate {
+  id: string
+  account_id: string
+  name: string
+  column_mapping: Record<string, string>
+  date_format: string | null
+  flip_amount: boolean
+  split_columns: boolean
+  inflow_column: string | null
+  outflow_column: string | null
+  created_at: string
+}
+
 export interface ImportLog {
   id: string
   user_id: string

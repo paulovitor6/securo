@@ -26,7 +26,15 @@ import type {
   Rule,
   RuleExportPayload,
   RuleImportResponse,
+  CategoryExportPayload,
+  CategoryImportResponse,
   ImportLog,
+  ImportTemplate,
+  AssetImportResult,
+  LoanDetails,
+  LoanInstallment,
+  LoanSummary,
+  LoanImportResult,
   ImportPreviewTransaction,
   Workspace,
   WorkspaceMember,
@@ -267,6 +275,22 @@ export const categories = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/categories/${id}`)
+  },
+  exportFile: async (): Promise<void> => {
+    const { data } = await api.get('/categories/export', { responseType: 'blob' })
+    const blob = new Blob([data], { type: 'application/json;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `securo-categories-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+  importFile: async (payload: CategoryExportPayload, overwrite = false): Promise<CategoryImportResponse> => {
+    const { data } = await api.post('/categories/import', { payload, overwrite })
+    return data
   },
 }
 
@@ -1070,6 +1094,16 @@ export const assets = {
     const { data } = await api.post('/assets/buy', tx)
     return data
   },
+  importSnapshot: async (file: File, groupId?: string | null, valueDate?: string): Promise<AssetImportResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (groupId) formData.append('group_id', groupId)
+    if (valueDate) formData.append('value_date', valueDate)
+    const { data } = await api.post('/assets/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
+  },
 }
 
 // Asset Groups ("wallets")
@@ -1166,6 +1200,72 @@ export const importLogs = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/import-logs/${id}`)
+  },
+}
+
+// Loans (financing / real estate loan tracking)
+export const loans = {
+  get: async (accountId: string): Promise<LoanSummary> => {
+    const { data } = await api.get(`/accounts/${accountId}/loan`)
+    return data
+  },
+  save: async (accountId: string, data: {
+    principal_amount: number
+    interest_rate: number
+    rate_period: 'annual' | 'monthly'
+    amortization_system: 'sac' | 'price'
+    term_months: number
+    start_date: string
+    insurance_monthly?: number | null
+    admin_fee_monthly?: number | null
+    payment_category_id?: string | null
+  }): Promise<LoanDetails> => {
+    const { data: result } = await api.put(`/accounts/${accountId}/loan`, data)
+    return result
+  },
+  installments: async (accountId: string): Promise<LoanInstallment[]> => {
+    const { data } = await api.get(`/accounts/${accountId}/loan/installments`)
+    return data
+  },
+  markInstallment: async (
+    accountId: string,
+    installmentId: string,
+    data: { status?: 'projected' | 'paid'; paid_date?: string | null },
+  ): Promise<LoanInstallment> => {
+    const { data: result } = await api.patch(`/accounts/${accountId}/loan/installments/${installmentId}`, data)
+    return result
+  },
+  importFile: async (file: File): Promise<LoanImportResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const { data } = await api.post('/loans/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
+  },
+}
+
+// Import Templates (saved CSV mapping presets per account)
+export const importTemplates = {
+  list: async (accountId?: string): Promise<ImportTemplate[]> => {
+    const { data } = await api.get('/import-templates', { params: accountId ? { account_id: accountId } : undefined })
+    return data
+  },
+  create: async (template: {
+    account_id: string
+    name: string
+    column_mapping: Record<string, string>
+    date_format?: string | null
+    flip_amount?: boolean
+    split_columns?: boolean
+    inflow_column?: string | null
+    outflow_column?: string | null
+  }): Promise<ImportTemplate> => {
+    const { data } = await api.post('/import-templates', template)
+    return data
+  },
+  delete: async (id: string): Promise<void> => {
+    await api.delete(`/import-templates/${id}`)
   },
 }
 

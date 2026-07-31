@@ -713,6 +713,10 @@ async def import_transactions(
         if not txn_data.fx_rate:
             await stamp_primary_amount(session, user_id, transaction)
 
+        if account is not None and account.type == "loan":
+            from app.services import loan_service
+            await loan_service.try_reconcile_payment(session, account, transaction)
+
         imported += 1
 
     # Update import log with actual imported count

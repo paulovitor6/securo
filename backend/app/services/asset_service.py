@@ -1,7 +1,9 @@
+import csv
+import io
 import logging
 import uuid
 from datetime import date, datetime, timezone, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -9,6 +11,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset
+from app.models.asset_group import AssetGroup
 from app.models.asset_transaction import AssetTransaction
 from app.models.asset_value import AssetValue
 from app.models.user import User
@@ -18,7 +21,15 @@ from app.providers.market_price import (
     MarketPriceRateLimitedError,
     get_market_price_provider,
 )
-from app.schemas.asset import AssetCreate, AssetUpdate, AssetValueCreate, AssetRead, AssetValueRead
+from app.schemas.asset import (
+    AssetCreate,
+    AssetUpdate,
+    AssetValueCreate,
+    AssetRead,
+    AssetValueRead,
+    AssetImportResult,
+    AssetImportRowError,
+)
 from app.services.fx_rate_service import convert, stamp_primary_amount
 
 logger = logging.getLogger(__name__)
@@ -1138,3 +1149,97 @@ async def refresh_all_market_prices(
 
     await session.commit()
     return {"refreshed": refreshed, "skipped": skipped, "rate_limited": 0}
+
+
+async def import_snapshot(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    group_id: Optional[uuid.UUID],
+    content: str,
+    value_date: date,
+) -> AssetImportResult:
+    """Import a monthly snapshot CSV (name, type, quantity, value) into a wallet.
+
+    Each row is find-or-created by name within the target group and gets a
+    manual, non-market Asset (units cached from `quantity`) plus one
+    `AssetValue` for `value_date` — `value` is the *total position value*
+    for that month, not a per-unit price (re-importing the same month
+    updates the existing AssetValue instead of duplicating it).
+    """
+    if group_id is not None:
+        group = await session.execute(
+            select(AssetGroup.id).where(AssetGroup.id == group_id, AssetGroup.workspace_id == workspace_id)
+        )
+        if not group.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset group not found")
+
+    existing_conditions = [Asset.workspace_id == workspace_id]
+    existing_conditions.append(Asset.group_id == group_id if group_id is not None else Asset.group_id.is_(None))
+    existing_result = await session.execute(select(Asset).where(*existing_conditions))
+    assets_by_name = {a.name.strip().lower(): a for a in existing_result.scalars().all()}
+
+    reader = csv.DictReader(io.StringIO(content))
+    reader.fieldnames = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
+
+    created = 0
+    updated = 0
+    values_recorded = 0
+    errors: list[AssetImportRowError] = []
+
+    for i, row in enumerate(reader, start=2):
+        name = (row.get("name") or "").strip()
+        asset_type = (row.get("type") or "").strip().lower()
+        quantity_raw = (row.get("quantity") or "").strip()
+        value_raw = (row.get("value") or "").strip()
+        try:
+            if not name:
+                raise ValueError("missing name")
+            if not asset_type:
+                raise ValueError("missing type")
+            if not value_raw:
+                raise ValueError("missing value")
+            quantity = Decimal(quantity_raw) if quantity_raw else None
+            value = Decimal(value_raw)
+        except (InvalidOperation, ValueError) as e:
+            errors.append(AssetImportRowError(row=i, message=str(e)))
+            continue
+
+        key = name.lower()
+        asset = assets_by_name.get(key)
+        if asset is None:
+            asset = Asset(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                name=name,
+                type=asset_type,
+                valuation_method="manual",
+                source="import",
+                group_id=group_id,
+                units=quantity,
+            )
+            session.add(asset)
+            await session.flush()
+            assets_by_name[key] = asset
+            created += 1
+        else:
+            asset.units = quantity
+            updated += 1
+
+        # `price` is a derived per-unit figure for the value-history chart —
+        # `amount` (the total) is the number the user actually typed.
+        price = (value / quantity) if quantity else None
+
+        value_row = await session.execute(
+            select(AssetValue).where(AssetValue.asset_id == asset.id, AssetValue.date == value_date)
+        )
+        existing_value = value_row.scalar_one_or_none()
+        if existing_value:
+            existing_value.amount = value
+            existing_value.price = price
+        else:
+            session.add(AssetValue(asset_id=asset.id, amount=value, price=price, date=value_date, source="manual"))
+        values_recorded += 1
+
+    await session.commit()
+    return AssetImportResult(created=created, updated=updated, values_recorded=values_recorded, errors=errors)

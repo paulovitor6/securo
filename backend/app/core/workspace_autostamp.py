@@ -31,6 +31,8 @@ from app.models.goal import Goal
 from app.models.group import Group, GroupMember
 from app.models.group_settlement import GroupSettlement
 from app.models.import_log import ImportLog
+from app.models.import_template import ImportTemplate
+from app.models.loan_details import LoanDetails
 from app.models.payee import Payee, PayeeMapping
 from app.models.recurring_transaction import RecurringTransaction
 from app.models.rule import Rule
@@ -55,6 +57,8 @@ _AUTOSTAMP_MODELS = (
     GroupMember,
     GroupSettlement,
     ImportLog,
+    ImportTemplate,
+    LoanDetails,
     Payee,
     PayeeMapping,
     RecurringTransaction,
