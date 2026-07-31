@@ -1,4 +1,4 @@
-import { Landmark, Layers, MoreHorizontal, Plus } from 'lucide-react'
+import { Layers, MoreHorizontal, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,7 +13,6 @@ export type AccountPageActionsProps = {
   onAddAccount: () => void
   onConnectBank: () => void
   onOpenCollections: () => void
-  onImportLoan: () => void
   testId?: string
 }
 
@@ -25,12 +24,6 @@ function DesktopSecondaryActions(props: AccountPageActionsProps) {
         <Layers size={16} />
         {t('collections.title')}
       </Button>
-      {props.canWrite && (
-        <Button variant="outline" className="hidden gap-1.5 sm:inline-flex" onClick={props.onImportLoan}>
-          <Landmark size={16} />
-          {t('accounts.importLoan')}
-        </Button>
-      )}
       {props.canWrite && (
         <Button variant="outline" className="hidden gap-1.5 sm:inline-flex" onClick={props.onConnectBank}>
           <Plus size={16} />
@@ -54,7 +47,6 @@ function MobileSecondaryMenu(props: AccountPageActionsProps) {
         <DropdownMenuItem onSelect={props.onOpenCollections}>
           <Layers size={16} />{t('collections.title')}
         </DropdownMenuItem>
-        {props.canWrite && <DropdownMenuItem onSelect={props.onImportLoan}><Landmark size={16} />{t('accounts.importLoan')}</DropdownMenuItem>}
         {props.canWrite && <DropdownMenuItem onSelect={props.onConnectBank}><Plus size={16} />{t('accounts.connectBank')}</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>

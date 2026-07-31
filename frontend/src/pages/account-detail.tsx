@@ -16,7 +16,6 @@ import { ArrowLeft, ArrowLeftRight, CalendarClock, ChevronLeft, ChevronRight, Cl
 import { CategoryIcon } from '@/components/category-icon'
 import { TransactionDialog, extractApiError } from '@/components/transaction-dialog'
 import { TransferDialog } from '@/components/transfer-dialog'
-import { LoanScheduleSection } from '@/components/loan-schedule-section'
 import { DatePickerInput } from '@/components/ui/date-picker-input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -945,11 +944,6 @@ export default function AccountDetailPage() {
             </Button>
           )}
         </div>
-      )}
-
-      {/* Loan (financing) schedule — only for type="loan" accounts */}
-      {account.type === 'loan' && (
-        <LoanScheduleSection accountId={account.id} currency={account.currency} />
       )}
 
       {/* Bill timeline (last 6 cycles) — only for CC with cycle metadata */}

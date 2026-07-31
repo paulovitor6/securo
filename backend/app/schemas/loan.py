@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict
 
 
 class LoanDetailsCreate(BaseModel):
+    name: str
+    currency: str = "BRL"
     principal_amount: Decimal
     interest_rate: Decimal
     rate_period: str = "annual"  # annual, monthly
@@ -20,7 +22,7 @@ class LoanDetailsCreate(BaseModel):
 
 class LoanDetailsRead(LoanDetailsCreate):
     id: uuid.UUID
-    account_id: uuid.UUID
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 

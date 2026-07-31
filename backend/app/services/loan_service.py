@@ -11,7 +11,6 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.account import Account
 from app.models.category import Category
 from app.models.loan_details import LoanDetails
 from app.models.loan_installment import LoanInstallment
@@ -115,23 +114,17 @@ def generate_schedule(
     return rows
 
 
-async def _get_details(session: AsyncSession, account_id: uuid.UUID, workspace_id: uuid.UUID) -> Optional[LoanDetails]:
+async def _get_details(session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID) -> Optional[LoanDetails]:
     result = await session.execute(
-        select(LoanDetails).where(LoanDetails.account_id == account_id, LoanDetails.workspace_id == workspace_id)
+        select(LoanDetails).where(LoanDetails.id == loan_id, LoanDetails.workspace_id == workspace_id)
     )
     return result.scalar_one_or_none()
 
 
-async def get_loan_summary(
-    session: AsyncSession, account_id: uuid.UUID, workspace_id: uuid.UUID
-) -> Optional[LoanSummary]:
-    details = await _get_details(session, account_id, workspace_id)
-    if not details:
-        return None
-
+async def _build_summary(session: AsyncSession, details: LoanDetails) -> LoanSummary:
     installments_result = await session.execute(
         select(LoanInstallment)
-        .where(LoanInstallment.account_id == account_id)
+        .where(LoanInstallment.loan_id == details.id)
         .order_by(LoanInstallment.installment_number)
     )
     installments = list(installments_result.scalars().all())
@@ -140,7 +133,6 @@ async def get_loan_summary(
     next_installment = next((i for i in installments if i.status == "projected"), None)
     outstanding_balance = installments[-1].outstanding_balance_after if installments else details.principal_amount
     if next_installment is not None:
-        # Balance right before the next unpaid installment is what's actually owed.
         idx = installments.index(next_installment)
         outstanding_balance = installments[idx - 1].outstanding_balance_after if idx > 0 else details.principal_amount
 
@@ -153,43 +145,97 @@ async def get_loan_summary(
     )
 
 
+async def list_loans(session: AsyncSession, workspace_id: uuid.UUID, include_archived: bool = False) -> list[LoanSummary]:
+    query = select(LoanDetails).where(LoanDetails.workspace_id == workspace_id)
+    if not include_archived:
+        query = query.where(LoanDetails.is_archived == False)  # noqa: E712
+    result = await session.execute(query.order_by(LoanDetails.name))
+    return [await _build_summary(session, d) for d in result.scalars().all()]
+
+
+async def get_loan_summary(session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID) -> Optional[LoanSummary]:
+    details = await _get_details(session, loan_id, workspace_id)
+    if not details:
+        return None
+    return await _build_summary(session, details)
+
+
 async def list_installments(
-    session: AsyncSession, account_id: uuid.UUID, workspace_id: uuid.UUID
+    session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID
 ) -> list[LoanInstallmentRead]:
     result = await session.execute(
         select(LoanInstallment)
-        .where(LoanInstallment.account_id == account_id, LoanInstallment.workspace_id == workspace_id)
+        .where(LoanInstallment.loan_id == loan_id, LoanInstallment.workspace_id == workspace_id)
         .order_by(LoanInstallment.installment_number)
     )
     return [LoanInstallmentRead.model_validate(i) for i in result.scalars().all()]
 
 
-async def create_or_replace_loan(
+async def _regenerate_schedule(session: AsyncSession, details: LoanDetails) -> None:
+    """Wipe and regenerate the installment schedule for a loan from scratch."""
+    existing = await session.execute(select(LoanInstallment).where(LoanInstallment.loan_id == details.id))
+    for row in existing.scalars().all():
+        await session.delete(row)
+    await session.flush()
+
+    i_month = monthly_rate(details.interest_rate, details.rate_period)
+    rows = generate_schedule(
+        details.principal_amount,
+        i_month,
+        details.term_months,
+        details.amortization_system,
+        details.start_date,
+        details.insurance_monthly,
+        details.admin_fee_monthly,
+    )
+    for row in rows:
+        session.add(LoanInstallment(loan_id=details.id, workspace_id=details.workspace_id, **row))
+
+
+async def create_loan(
+    session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID, data: LoanDetailsCreate
+) -> LoanSummary:
+    details = LoanDetails(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        name=data.name,
+        currency=data.currency,
+        principal_amount=data.principal_amount,
+        interest_rate=data.interest_rate,
+        rate_period=data.rate_period,
+        amortization_system=data.amortization_system,
+        term_months=data.term_months,
+        start_date=data.start_date,
+        insurance_monthly=data.insurance_monthly,
+        admin_fee_monthly=data.admin_fee_monthly,
+        payment_category_id=data.payment_category_id,
+    )
+    session.add(details)
+    await session.flush()
+    await _regenerate_schedule(session, details)
+    await session.commit()
+    await reconcile_all_payments(session, details.id, workspace_id)
+    return await get_loan_summary(session, details.id, workspace_id)
+
+
+async def update_loan(
     session: AsyncSession,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
-    account_id: uuid.UUID,
+    loan_id: uuid.UUID,
     data: LoanDetailsCreate,
-) -> LoanDetailsRead:
-    """Upsert a loan's characteristics and regenerate its full schedule.
+) -> Optional[LoanSummary]:
+    """Update a loan's characteristics and regenerate its full schedule.
 
     Editing the loan (rate, term, ...) replaces every installment row —
-    paid/projected status isn't merged row by row. Call
-    `reconcile_all_payments` afterwards to re-match the account's existing
-    transactions against the new schedule.
+    paid/projected status isn't merged row by row. Reconciliation re-runs
+    afterwards so payment history isn't lost.
     """
-    account_result = await session.execute(
-        select(Account).where(Account.id == account_id, Account.workspace_id == workspace_id)
-    )
-    account = account_result.scalar_one_or_none()
-    if not account:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    details = await _get_details(session, loan_id, workspace_id)
+    if not details:
+        return None
 
-    details = await _get_details(session, account_id, workspace_id)
-    if details is None:
-        details = LoanDetails(user_id=user_id, workspace_id=workspace_id, account_id=account_id)
-        session.add(details)
-
+    details.name = data.name
+    details.currency = data.currency
     details.principal_amount = data.principal_amount
     details.interest_rate = data.interest_rate
     details.rate_period = data.rate_period
@@ -201,39 +247,24 @@ async def create_or_replace_loan(
     details.payment_category_id = data.payment_category_id
     await session.flush()
 
-    # Wipe and regenerate the schedule from scratch.
-    existing = await session.execute(
-        select(LoanInstallment).where(LoanInstallment.account_id == account_id)
-    )
-    for row in existing.scalars().all():
-        await session.delete(row)
-    await session.flush()
-
-    i_month = monthly_rate(data.interest_rate, data.rate_period)
-    rows = generate_schedule(
-        data.principal_amount,
-        i_month,
-        data.term_months,
-        data.amortization_system,
-        data.start_date,
-        data.insurance_monthly,
-        data.admin_fee_monthly,
-    )
-    for row in rows:
-        session.add(LoanInstallment(account_id=account_id, workspace_id=workspace_id, **row))
-
-    account.type = "loan"
-    account.balance = data.principal_amount
-
+    await _regenerate_schedule(session, details)
     await session.commit()
-    await reconcile_all_payments(session, account_id, workspace_id)
-    await session.refresh(details)
-    return LoanDetailsRead.model_validate(details)
+    await reconcile_all_payments(session, loan_id, workspace_id)
+    return await get_loan_summary(session, loan_id, workspace_id)
+
+
+async def delete_loan(session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID) -> bool:
+    details = await _get_details(session, loan_id, workspace_id)
+    if not details:
+        return False
+    await session.delete(details)
+    await session.commit()
+    return True
 
 
 async def update_installment(
     session: AsyncSession,
-    account_id: uuid.UUID,
+    loan_id: uuid.UUID,
     installment_id: uuid.UUID,
     workspace_id: uuid.UUID,
     status_value: Optional[str],
@@ -242,7 +273,7 @@ async def update_installment(
     result = await session.execute(
         select(LoanInstallment).where(
             LoanInstallment.id == installment_id,
-            LoanInstallment.account_id == account_id,
+            LoanInstallment.loan_id == loan_id,
             LoanInstallment.workspace_id == workspace_id,
         )
     )
@@ -254,30 +285,39 @@ async def update_installment(
         if status_value != "paid":
             installment.paid_date = None
             installment.transaction_id = None
-    if paid_date is not None:
+        elif paid_date is not None:
+            installment.paid_date = paid_date
+    elif paid_date is not None:
         installment.paid_date = paid_date
     await session.commit()
     await session.refresh(installment)
     return LoanInstallmentRead.model_validate(installment)
 
 
-async def try_reconcile_payment(session: AsyncSession, account: Account, transaction: Transaction) -> None:
+async def try_reconcile_payment(session: AsyncSession, transaction: Transaction) -> None:
     """Match a transaction against the next unpaid installment, if it looks like a loan payment.
 
-    Fires after a transaction is created/imported on a `type="loan"`
-    account. No amount validation — matches the closest-by-date `projected`
-    installment purely on the transaction landing in the configured payment
-    category. Simple on purpose: this is reconciliation, not enforcement.
+    Fires after a transaction is created/imported on any account. No amount
+    validation — matches the closest-by-date `projected` installment of
+    whichever loan (in the same workspace) has this transaction's category
+    configured as its payment category. Simple on purpose: this is
+    reconciliation, not enforcement.
     """
-    if account.type != "loan" or transaction.category_id is None:
+    if transaction.category_id is None:
         return
-    details = await _get_details(session, account.id, account.workspace_id)
-    if not details or details.payment_category_id != transaction.category_id:
+    loan_result = await session.execute(
+        select(LoanDetails).where(
+            LoanDetails.workspace_id == transaction.workspace_id,
+            LoanDetails.payment_category_id == transaction.category_id,
+        )
+    )
+    loan = loan_result.scalars().first()
+    if loan is None:
         return
 
     pending_result = await session.execute(
         select(LoanInstallment)
-        .where(LoanInstallment.account_id == account.id, LoanInstallment.status == "projected")
+        .where(LoanInstallment.loan_id == loan.id, LoanInstallment.status == "projected")
         .order_by(LoanInstallment.installment_number)
     )
     pending = list(pending_result.scalars().all())
@@ -290,29 +330,24 @@ async def try_reconcile_payment(session: AsyncSession, account: Account, transac
     closest.transaction_id = transaction.id
 
 
-async def reconcile_all_payments(session: AsyncSession, account_id: uuid.UUID, workspace_id: uuid.UUID) -> None:
-    """Re-run reconciliation over every existing transaction on a loan account.
+async def reconcile_all_payments(session: AsyncSession, loan_id: uuid.UUID, workspace_id: uuid.UUID) -> None:
+    """Re-run reconciliation over every existing transaction that matches this loan's payment category.
 
     Used after (re)creating the schedule so payment history isn't lost when
-    the loan's characteristics are edited.
+    the loan's characteristics are edited. Scans the whole workspace since a
+    loan payment can come from any account.
     """
-    account_result = await session.execute(
-        select(Account).where(Account.id == account_id, Account.workspace_id == workspace_id)
-    )
-    account = account_result.scalar_one_or_none()
-    if not account:
-        return
-    details = await _get_details(session, account_id, workspace_id)
+    details = await _get_details(session, loan_id, workspace_id)
     if not details or not details.payment_category_id:
         return
 
     tx_result = await session.execute(
         select(Transaction)
-        .where(Transaction.account_id == account_id, Transaction.category_id == details.payment_category_id)
+        .where(Transaction.workspace_id == workspace_id, Transaction.category_id == details.payment_category_id)
         .order_by(Transaction.date)
     )
     for transaction in tx_result.scalars().all():
-        await try_reconcile_payment(session, account, transaction)
+        await try_reconcile_payment(session, transaction)
     await session.commit()
 
 
@@ -322,19 +357,19 @@ async def import_loans_csv(
     user_id: uuid.UUID,
     content: str,
 ) -> LoanImportResult:
-    """Import loan characteristics from CSV — one row per loan account.
+    """Import loan characteristics from CSV — one row per loan.
 
-    Columns: account_name, principal_amount, interest_rate, rate_period,
+    Columns: name, principal_amount, interest_rate, rate_period,
     amortization_system, term_months, start_date, insurance_monthly,
-    admin_fee_monthly, payment_category_name, currency. Creates the
-    `type="loan"` account if it doesn't already exist (matched by name) and
-    (re)generates its schedule.
+    admin_fee_monthly, payment_category_name, currency. Finds an existing
+    loan by name to update, or creates a new one, and (re)generates its
+    schedule either way.
     """
     reader = csv.DictReader(io.StringIO(content))
     reader.fieldnames = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
 
-    accounts_result = await session.execute(select(Account).where(Account.workspace_id == workspace_id))
-    accounts_by_name = {a.name.strip().lower(): a for a in accounts_result.scalars().all()}
+    loans_result = await session.execute(select(LoanDetails).where(LoanDetails.workspace_id == workspace_id))
+    loans_by_name = {d.name.strip().lower(): d for d in loans_result.scalars().all()}
 
     categories_result = await session.execute(select(Category).where(Category.workspace_id == workspace_id))
     categories_by_name = {c.name.strip().lower(): c.id for c in categories_result.scalars().all()}
@@ -345,9 +380,9 @@ async def import_loans_csv(
 
     for i, row in enumerate(reader, start=2):
         try:
-            account_name = (row.get("account_name") or "").strip()
-            if not account_name:
-                raise ValueError("missing account_name")
+            name = (row.get("name") or "").strip()
+            if not name:
+                raise ValueError("missing name")
             principal_amount = Decimal((row.get("principal_amount") or "").strip())
             interest_rate = Decimal((row.get("interest_rate") or "").strip())
             rate_period = (row.get("rate_period") or "annual").strip().lower() or "annual"
@@ -362,52 +397,33 @@ async def import_loans_csv(
             admin_fee_monthly = Decimal(admin_fee_raw) if admin_fee_raw else None
             payment_category_name = (row.get("payment_category_name") or "").strip()
             payment_category_id = categories_by_name.get(payment_category_name.lower()) if payment_category_name else None
-            currency = (row.get("currency") or "").strip()
+            currency = (row.get("currency") or "").strip() or "BRL"
         except (ValueError, ArithmeticError) as e:
             errors.append(LoanImportRowError(row=i, message=str(e)))
             continue
 
-        key = account_name.lower()
-        account = accounts_by_name.get(key)
-        is_new = account is None
-        if account is None:
-            account = Account(
-                user_id=user_id,
-                workspace_id=workspace_id,
-                name=account_name,
-                type="loan",
-                balance=principal_amount,
-                currency=currency or "BRL",
-            )
-            session.add(account)
-            await session.flush()
-            accounts_by_name[key] = account
+        data = LoanDetailsCreate(
+            name=name,
+            currency=currency,
+            principal_amount=principal_amount,
+            interest_rate=interest_rate,
+            rate_period=rate_period,
+            amortization_system=amortization_system,
+            term_months=term_months,
+            start_date=start_date,
+            insurance_monthly=insurance_monthly,
+            admin_fee_monthly=admin_fee_monthly,
+            payment_category_id=payment_category_id,
+        )
 
-        try:
-            await create_or_replace_loan(
-                session,
-                workspace_id,
-                user_id,
-                account.id,
-                LoanDetailsCreate(
-                    principal_amount=principal_amount,
-                    interest_rate=interest_rate,
-                    rate_period=rate_period,
-                    amortization_system=amortization_system,
-                    term_months=term_months,
-                    start_date=start_date,
-                    insurance_monthly=insurance_monthly,
-                    admin_fee_monthly=admin_fee_monthly,
-                    payment_category_id=payment_category_id,
-                ),
-            )
-        except HTTPException as e:
-            errors.append(LoanImportRowError(row=i, message=str(e.detail)))
-            continue
-
-        if is_new:
+        key = name.lower()
+        existing = loans_by_name.get(key)
+        if existing is None:
+            summary = await create_loan(session, workspace_id, user_id, data)
+            loans_by_name[key] = await _get_details(session, summary.details.id, workspace_id)
             created += 1
         else:
+            await update_loan(session, workspace_id, existing.id, data)
             updated += 1
 
     return LoanImportResult(created=created, updated=updated, errors=errors)

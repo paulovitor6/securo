@@ -424,7 +424,9 @@ export interface AssetImportResult {
 
 export interface LoanDetails {
   id: string
-  account_id: string
+  name: string
+  currency: string
+  is_archived: boolean
   principal_amount: number
   interest_rate: number
   rate_period: 'annual' | 'monthly'

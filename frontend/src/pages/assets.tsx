@@ -53,6 +53,7 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { PageHeader } from '@/components/page-header'
+import { LoansTab } from '@/components/loans-tab'
 import { usePrivacyMode } from '@/hooks/use-privacy-mode'
 import { useAuth } from '@/contexts/auth-context'
 import { useWorkspace } from '@/contexts/workspace-context'
@@ -206,7 +207,7 @@ export default function AssetsPage() {
     staleTime: Infinity,
   })
 
-  const [activeTab, setActiveTab] = useState<'holdings' | 'transactions'>('holdings')
+  const [activeTab, setActiveTab] = useState<'holdings' | 'transactions' | 'loans'>('holdings')
   // Holding id for the lightweight "add transaction to this holding" dialog,
   // opened from the holdings table ("+ add buys") and the inline ledger.
   const [addTxAssetId, setAddTxAssetId] = useState<string | null>(null)
@@ -1084,9 +1085,17 @@ export default function AssetsPage() {
         >
           {t('assets.tabTransactions')}
         </button>
+        <button
+          onClick={() => setActiveTab('loans')}
+          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === 'loans' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+        >
+          {t('assets.tabLoans')}
+        </button>
       </div>
 
-      {activeTab === 'transactions' ? (
+      {activeTab === 'loans' ? (
+        <LoansTab canWrite={canWrite} />
+      ) : activeTab === 'transactions' ? (
         <AssetTransactionsTab
           holdings={assetsList ?? []}
           wallets={sortedWallets}
