@@ -37,6 +37,10 @@ class ImportTemplate(Base):
     split_columns: Mapped[bool] = mapped_column(Boolean, default=False)
     inflow_column: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     outflow_column: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Explicit column separator (`,`, `;`, tab, `|`). Null means "keep
+    # auto-detecting" — most banks are fine with the sniffer, this is only
+    # needed for the ambiguous ones.
+    delimiter: Mapped[Optional[str]] = mapped_column(String(1), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     account: Mapped["Account"] = relationship()

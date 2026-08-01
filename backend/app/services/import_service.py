@@ -292,6 +292,9 @@ CSV_MAPPABLE_FIELDS = (
 )
 
 
+CSV_DELIMITERS = (',', ';', '\t', '|')
+
+
 def _sniff_csv_dialect(text: str):
     """Detect the CSV dialect (delimiter/quoting), falling back to comma."""
     try:
@@ -300,15 +303,24 @@ def _sniff_csv_dialect(text: str):
         return csv.excel
 
 
-def detect_csv_columns(content: bytes) -> list[str]:
+def _resolve_delimiter(text: str, delimiter: str | None) -> str:
+    """An explicit delimiter always wins; otherwise sniff it from the file."""
+    if delimiter:
+        return delimiter
+    return _sniff_csv_dialect(text).delimiter
+
+
+def detect_csv_columns(content: bytes, delimiter: str | None = None) -> list[str]:
     """Return the CSV header column names exactly as they appear in the file.
 
     Used by the import preview so the UI can offer accurate column-mapping
-    dropdowns instead of guessing headers client-side.
+    dropdowns instead of guessing headers client-side. `delimiter`, when
+    given, overrides auto-detection (some exports use `;` or tabs that the
+    sniffer occasionally gets wrong).
     """
     text = content.decode('utf-8-sig')  # Handle BOM
-    dialect = _sniff_csv_dialect(text)
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    resolved_delimiter = _resolve_delimiter(text, delimiter)
+    reader = csv.DictReader(io.StringIO(text), delimiter=resolved_delimiter)
     return [f.strip() for f in (reader.fieldnames or []) if f and f.strip()]
 
 
@@ -319,6 +331,7 @@ def parse_csv(
     inflow_column: str | None = None,
     outflow_column: str | None = None,
     column_mapping: dict[str, str] | None = None,
+    delimiter: str | None = None,
 ) -> list[TransactionImport]:
     """Parse CSV file content and return transactions.
 
@@ -332,10 +345,13 @@ def parse_csv(
     - inflow_column/outflow_column: use split columns instead of single amount
     - column_mapping: explicit Securo-field -> CSV-header map. Any field
       present here overrides auto-detection; unmapped fields still auto-detect.
+    - delimiter: explicit column separator (`,`, `;`, tab, `|`). Overrides
+      auto-detection when the sniffer picks the wrong one (small/ambiguous
+      files, descriptions that themselves contain commas, ...).
     """
     text = content.decode('utf-8-sig')  # Handle BOM
-    dialect = _sniff_csv_dialect(text)
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    resolved_delimiter = _resolve_delimiter(text, delimiter)
+    reader = csv.DictReader(io.StringIO(text), delimiter=resolved_delimiter)
 
     # Normalize field names
     fieldnames = [f.lower().strip() for f in (reader.fieldnames or [])]

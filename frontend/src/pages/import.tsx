@@ -37,10 +37,16 @@ const CSV_MAPPING_FIELDS = [
   { key: 'fx_rate', label: 'import.mapFxRate' },
 ] as const
 
-function toReviewTransactions(txns: ImportPreviewTransaction[]): ImportReviewTransaction[] {
+// `sourceFileIndex` (not the filename) is the grouping key used at import
+// time — two selected files can share the same name (e.g. the bank always
+// exports "extrato.csv"), so the name alone isn't a safe way to tell their
+// rows apart.
+function toReviewTransactions(txns: ImportPreviewTransaction[], sourceFile: string, sourceFileIndex: number): ImportReviewTransaction[] {
   return txns.map((tx, i) => ({
     ...tx,
-    _id: tx.external_id ? `${tx.external_id}-${i}` : `idx-${i}`,
+    _id: tx.external_id ? `${sourceFileIndex}-${tx.external_id}-${i}` : `${sourceFileIndex}-idx-${i}`,
+    _sourceFile: sourceFile,
+    _sourceFileIndex: sourceFileIndex,
     excluded: false,
     selected_category_id: undefined,
   }))
@@ -59,8 +65,8 @@ export default function ImportPage() {
   const [reviewTransactions, setReviewTransactions] = useState<ImportReviewTransaction[]>([])
   const [selectedAccount, setSelectedAccount] = useState('')
   const [dragOver, setDragOver] = useState(false)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [currentFile, setCurrentFile] = useState<File | null>(null)
+  const [fileNames, setFileNames] = useState<string[]>([])
+  const [currentFiles, setCurrentFiles] = useState<File[]>([])
   const [deleteTarget, setDeleteTarget] = useState<ImportLog | null>(null)
   const [csvHeaders, setCsvHeaders] = useState<string[]>([])
 
@@ -77,6 +83,7 @@ export default function ImportPage() {
   const [csvInflowColumn, setCsvInflowColumn] = useState('')
   const [csvOutflowColumn, setCsvOutflowColumn] = useState('')
   const [csvColumnMapping, setCsvColumnMapping] = useState<Record<string, string>>({})
+  const [csvDelimiter, setCsvDelimiter] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false)
   const [newTemplateName, setNewTemplateName] = useState('')
@@ -117,6 +124,7 @@ export default function ImportPage() {
       split_columns: csvSplitColumns,
       inflow_column: csvInflowColumn || null,
       outflow_column: csvOutflowColumn || null,
+      delimiter: csvDelimiter || null,
     }),
     onSuccess: (template) => {
       queryClient.invalidateQueries({ queryKey: ['import-templates', selectedAccount] })
@@ -144,6 +152,7 @@ export default function ImportPage() {
     setCsvInflowColumn(template.inflow_column ?? '')
     setCsvOutflowColumn(template.outflow_column ?? '')
     setCsvColumnMapping(template.column_mapping)
+    setCsvDelimiter(template.delimiter ?? '')
     rePreview({
       date_format: template.date_format ?? '',
       flip_amount: template.flip_amount,
@@ -151,16 +160,29 @@ export default function ImportPage() {
       inflow: template.inflow_column ?? '',
       outflow: template.outflow_column ?? '',
       mapping: template.column_mapping,
+      delimiter: template.delimiter ?? '',
     })
   }
 
   const previewMutation = useMutation({
-    mutationFn: ({ file, options }: { file: File; options?: { date_format?: string; flip_amount?: boolean; inflow_column?: string; outflow_column?: string; column_mapping?: Record<string, string> } }) =>
-      transactionsApi.previewImport(file, options),
-    onSuccess: (data) => {
-      setPreviewData(data)
-      setCsvHeaders(data.csv_columns ?? [])
-      setReviewTransactions(toReviewTransactions(data.transactions))
+    mutationFn: async ({ files, options }: { files: File[]; options?: { date_format?: string; flip_amount?: boolean; inflow_column?: string; outflow_column?: string; column_mapping?: Record<string, string>; delimiter?: string } }) => {
+      // Every file is parsed with the same options — the multi-file feature
+      // only makes sense when they share one format (same bank, same layout).
+      const results = await Promise.all(files.map(f => transactionsApi.previewImport(f, options)))
+      return results
+    },
+    onSuccess: (results, variables) => {
+      const first = results[0]
+      setPreviewData({
+        transactions: results.flatMap(r => r.transactions),
+        detected_format: first.detected_format,
+        csv_columns: first.csv_columns,
+        parse_error: results.find(r => r.parse_error)?.parse_error ?? null,
+      })
+      setCsvHeaders(first.csv_columns ?? [])
+      setReviewTransactions(
+        results.flatMap((r, i) => toReviewTransactions(r.transactions, variables.files[i]?.name ?? '', i))
+      )
       setSearchQuery('')
       setFilterCategoryIds([])
       setFilterUncategorized(false)
@@ -174,30 +196,44 @@ export default function ImportPage() {
   })
 
   const importMutation = useMutation({
-    mutationFn: () => {
-      const txns = reviewTransactions.map(rt => ({
-        description: rt.description,
-        amount: rt.amount,
-        date: rt.date,
-        type: rt.type,
-        external_id: rt.external_id ?? undefined,
-        currency: rt.currency ?? undefined,
-        fx_rate: rt.fx_rate ?? undefined,
-        payee_raw: rt.payee_raw ?? undefined,
-        category_name: rt.category_name ?? undefined,
-        excluded: rt.excluded,
-        category_id: rt.selected_category_id !== undefined
-          ? (rt.selected_category_id ?? undefined)
-          : (rt.suggested_category_id ?? undefined),
-        force_uncategorized: rt.selected_category_id === null,
-      }))
-      return transactionsApi.import(
-        selectedAccount,
-        txns,
-        fileName ?? '',
-        previewData!.detected_format,
-        isCsvFile ? { detect_duplicates: csvDetectDuplicates } : undefined,
-      )
+    mutationFn: async () => {
+      // One import call per source file — keeps the existing per-file
+      // ImportLog/undo behavior, and lets duplicate detection see each
+      // earlier file's rows already committed when the next one runs.
+      let totalImported = 0
+      let totalSkipped = 0
+      let totalExcluded = 0
+      for (let i = 0; i < currentFiles.length; i++) {
+        const rows = reviewTransactions.filter(rt => rt._sourceFileIndex === i)
+        if (rows.length === 0) continue
+        const txns = rows.map(rt => ({
+          description: rt.description,
+          amount: rt.amount,
+          date: rt.date,
+          type: rt.type,
+          external_id: rt.external_id ?? undefined,
+          currency: rt.currency ?? undefined,
+          fx_rate: rt.fx_rate ?? undefined,
+          payee_raw: rt.payee_raw ?? undefined,
+          category_name: rt.category_name ?? undefined,
+          excluded: rt.excluded,
+          category_id: rt.selected_category_id !== undefined
+            ? (rt.selected_category_id ?? undefined)
+            : (rt.suggested_category_id ?? undefined),
+          force_uncategorized: rt.selected_category_id === null,
+        }))
+        const result = await transactionsApi.import(
+          selectedAccount,
+          txns,
+          currentFiles[i].name,
+          previewData!.detected_format,
+          isCsvFile ? { detect_duplicates: csvDetectDuplicates } : undefined,
+        )
+        totalImported += result.imported
+        totalSkipped += result.skipped ?? 0
+        totalExcluded += result.excluded ?? 0
+      }
+      return { imported: totalImported, skipped: totalSkipped, excluded: totalExcluded }
     },
     onSuccess: (data) => {
       invalidateFinancialQueries(queryClient)
@@ -210,8 +246,8 @@ export default function ImportPage() {
       setPreviewData(null)
       setReviewTransactions([])
       setSelectedAccount('')
-      setFileName(null)
-      setCurrentFile(null)
+      setFileNames([])
+      setCurrentFiles([])
       resetCsvOptions()
       if (fileInputRef.current) fileInputRef.current.value = ''
     },
@@ -238,16 +274,25 @@ export default function ImportPage() {
     setCsvInflowColumn('')
     setCsvOutflowColumn('')
     setCsvColumnMapping({})
+    setCsvDelimiter('')
     setCsvHeaders([])
   }
 
-  function processFile(file: File) {
-    setFileName(file.name)
-    setCurrentFile(file)
+  function processFiles(files: File[]) {
+    if (files.length === 0) return
+    // Multi-file only makes sense when every file is the same format — all
+    // get parsed with one shared set of CSV options.
+    const extensions = new Set(files.map(f => f.name.toLowerCase().split('.').pop() ?? ''))
+    if (files.length > 1 && extensions.size > 1) {
+      toast.error(t('import.mixedFormatsError'))
+      return
+    }
+    setFileNames(files.map(f => f.name))
+    setCurrentFiles(files)
     resetCsvOptions()
     // CSV headers come back from the preview response (csv_columns), which
     // parses the file server-side and handles any delimiter/quoting.
-    previewMutation.mutate({ file })
+    previewMutation.mutate({ files })
   }
 
   // Re-run the preview with the current CSV options. Accepts overrides so a
@@ -260,16 +305,18 @@ export default function ImportPage() {
     inflow?: string
     outflow?: string
     mapping?: Record<string, string>
+    delimiter?: string
   }) => {
-    if (!currentFile) return
+    if (currentFiles.length === 0) return
     const dateFormat = overrides?.date_format ?? csvDateFormat
     const flip = overrides?.flip_amount ?? csvFlipAmount
     const split = overrides?.split ?? csvSplitColumns
     const inflow = overrides?.inflow ?? csvInflowColumn
     const outflow = overrides?.outflow ?? csvOutflowColumn
     const mapping = overrides?.mapping ?? csvColumnMapping
+    const delimiter = overrides?.delimiter ?? csvDelimiter
 
-    const options: { date_format?: string; flip_amount?: boolean; inflow_column?: string; outflow_column?: string; column_mapping?: Record<string, string> } = {}
+    const options: { date_format?: string; flip_amount?: boolean; inflow_column?: string; outflow_column?: string; column_mapping?: Record<string, string>; delimiter?: string } = {}
     if (dateFormat) options.date_format = dateFormat
     if (flip) options.flip_amount = true
     if (split && inflow && outflow) {
@@ -278,9 +325,10 @@ export default function ImportPage() {
     }
     const cleanMapping = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v))
     if (Object.keys(cleanMapping).length > 0) options.column_mapping = cleanMapping
-    previewMutation.mutate({ file: currentFile, options })
+    if (delimiter) options.delimiter = delimiter
+    previewMutation.mutate({ files: currentFiles, options })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentFile, csvDateFormat, csvFlipAmount, csvSplitColumns, csvInflowColumn, csvOutflowColumn, csvColumnMapping])
+  }, [currentFiles, csvDateFormat, csvFlipAmount, csvSplitColumns, csvInflowColumn, csvOutflowColumn, csvColumnMapping, csvDelimiter])
 
   const handleMappingChange = useCallback((field: string, column: string) => {
     setCsvColumnMapping(prev => {
@@ -291,22 +339,22 @@ export default function ImportPage() {
   }, [rePreview])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) processFile(file)
+    const files = Array.from(e.target.files ?? [])
+    if (files.length > 0) processFiles(files)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) processFile(file)
+    const files = Array.from(e.dataTransfer.files ?? [])
+    if (files.length > 0) processFiles(files)
   }
 
   const handleReset = () => {
     setPreviewData(null)
     setReviewTransactions([])
-    setFileName(null)
-    setCurrentFile(null)
+    setFileNames([])
+    setCurrentFiles([])
     setSelectedAccount('')
     resetCsvOptions()
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -324,7 +372,7 @@ export default function ImportPage() {
     ))
   }, [])
 
-  const isCsvFile = fileName?.toLowerCase().endsWith('.csv') ?? false
+  const isCsvFile = fileNames[0]?.toLowerCase().endsWith('.csv') ?? false
 
   const incomeCount = previewData?.transactions.filter(t => t.type === 'credit').length ?? 0
   const expenseCount = previewData?.transactions.filter(t => t.type === 'debit').length ?? 0
@@ -349,6 +397,7 @@ export default function ImportPage() {
           ref={fileInputRef}
           type="file"
           accept=".ofx,.qfx,.csv,.qif,.xml,.camt"
+          multiple
           onChange={handleFileChange}
           className="hidden"
         />
@@ -359,15 +408,26 @@ export default function ImportPage() {
               <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-4 animate-pulse">
                 <FileText size={22} className="text-primary" />
               </div>
-              <p className="text-sm font-semibold text-foreground">{t('import.processing')}</p>
-              <p className="text-xs text-muted-foreground mt-1">{fileName}</p>
+              <p className="text-sm font-semibold text-foreground">
+                {fileNames.length > 1 ? t('import.processingMultiple', { count: fileNames.length }) : t('import.processing')}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md truncate" title={fileNames.join(', ')}>
+                {fileNames.join(', ')}
+              </p>
             </>
-          ) : fileName && previewData ? (
+          ) : fileNames.length > 0 && previewData ? (
             <>
               <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mb-4">
                 <CheckCircle2 size={22} className="text-emerald-500" />
               </div>
-              <p className="text-sm font-semibold text-foreground">{fileName}</p>
+              <p className="text-sm font-semibold text-foreground">
+                {fileNames.length > 1 ? t('import.filesSelected', { count: fileNames.length }) : fileNames[0]}
+              </p>
+              {fileNames.length > 1 && (
+                <p className="text-xs text-muted-foreground mt-0.5 max-w-md truncate" title={fileNames.join(', ')}>
+                  {fileNames.join(', ')}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground mt-1">
                 {t('import.previewInfo', { count: previewData.transactions.length, format: previewData.detected_format.toUpperCase() })}
               </p>
@@ -375,7 +435,7 @@ export default function ImportPage() {
                 className="mt-3 text-xs text-muted-foreground hover:text-rose-500 transition-colors flex items-center gap-1"
                 onClick={(e) => { e.stopPropagation(); handleReset() }}
               >
-                <X size={12} /> {t('import.removeFile')}
+                <X size={12} /> {fileNames.length > 1 ? t('import.removeFiles') : t('import.removeFile')}
               </button>
             </>
           ) : (
@@ -387,6 +447,7 @@ export default function ImportPage() {
                 {t('import.dragOrClick')}
               </p>
               <p className="text-xs text-muted-foreground">{t('import.acceptedFormats')}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('import.multiFileHint')}</p>
               <button
                 className="mt-2 text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
                 onClick={(e) => {
@@ -525,6 +586,20 @@ export default function ImportPage() {
                     <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                     <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                     <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                  </select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground mb-1 block">{t('import.delimiter')}</Label>
+                  <select
+                    className="w-full border border-border rounded-lg px-3 py-1.5 text-sm bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={csvDelimiter}
+                    onChange={(e) => { setCsvDelimiter(e.target.value); rePreview({ delimiter: e.target.value }) }}
+                  >
+                    <option value="">{t('import.delimiterAuto')}</option>
+                    <option value=",">{t('import.delimiterComma')}</option>
+                    <option value=";">{t('import.delimiterSemicolon')}</option>
+                    <option value={'\t'}>{t('import.delimiterTab')}</option>
+                    <option value="|">{t('import.delimiterPipe')}</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2 pt-4">

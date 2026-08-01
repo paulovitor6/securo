@@ -480,6 +480,7 @@ export interface ImportTemplate {
   split_columns: boolean
   inflow_column: string | null
   outflow_column: string | null
+  delimiter: string | null
   created_at: string
 }
 
@@ -515,6 +516,8 @@ export interface ImportPreviewTransaction {
 
 export interface ImportReviewTransaction extends ImportPreviewTransaction {
   _id: string
+  _sourceFile: string
+  _sourceFileIndex: number
   excluded: boolean
   selected_category_id?: string | null
 }

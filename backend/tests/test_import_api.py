@@ -46,6 +46,24 @@ async def test_preview_csv_returns_columns(client: AsyncClient, auth_headers, te
 
 
 @pytest.mark.asyncio
+async def test_preview_csv_explicit_delimiter(client: AsyncClient, auth_headers, test_account):
+    """A description containing a comma would confuse the sniffer into
+    picking the wrong delimiter — an explicit `delimiter` form field fixes it."""
+    csv_content = "date;description;amount\n10/02/2026;Uber, viagem centro;-25.50\n".encode("utf-8")
+    response = await client.post(
+        "/api/transactions/import/preview",
+        headers=auth_headers,
+        files={"file": ("extrato.csv", csv_content, "text/csv")},
+        data={"delimiter": ";"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["csv_columns"] == ["date", "description", "amount"]
+    assert len(data["transactions"]) == 1
+    assert data["transactions"][0]["description"] == "Uber, viagem centro"
+
+
+@pytest.mark.asyncio
 async def test_preview_csv_with_column_mapping(client: AsyncClient, auth_headers, test_account):
     """A CSV with non-standard headers parses once columns are mapped."""
     csv_content = b"transaction_date,details,value\n15/02/2026,GROCERY STORE,-80.00\n"

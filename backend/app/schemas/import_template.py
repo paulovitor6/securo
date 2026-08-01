@@ -13,6 +13,7 @@ class ImportTemplateBase(BaseModel):
     split_columns: bool = False
     inflow_column: Optional[str] = None
     outflow_column: Optional[str] = None
+    delimiter: Optional[str] = None
 
 
 class ImportTemplateCreate(ImportTemplateBase):
@@ -27,6 +28,7 @@ class ImportTemplateUpdate(BaseModel):
     split_columns: Optional[bool] = None
     inflow_column: Optional[str] = None
     outflow_column: Optional[str] = None
+    delimiter: Optional[str] = None
 
 
 class ImportTemplateRead(ImportTemplateBase):

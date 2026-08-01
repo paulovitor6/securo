@@ -186,6 +186,31 @@ class TestParseCsv:
         assert transactions[1].amount == Decimal("5000.00")
         assert transactions[1].type == "credit"
 
+    def test_parse_csv_explicit_delimiter_overrides_sniffing(self):
+        """An explicit delimiter is honored even when it would confuse the
+        sniffer (a description that itself contains a comma)."""
+        csv_content = (
+            "date;description;amount\n"
+            "15/01/2026;Grocery, Store & Co;-120.50\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"), delimiter=";")
+
+        assert len(transactions) == 1
+        assert transactions[0].description == "Grocery, Store & Co"
+        assert transactions[0].amount == Decimal("120.50")
+
+    def test_parse_csv_explicit_tab_delimiter(self):
+        csv_content = "date\tdescription\tamount\n2026-01-15\tGrocery Store\t-120.50\n"
+        transactions = parse_csv(csv_content.encode("utf-8"), delimiter="\t")
+        assert len(transactions) == 1
+        assert transactions[0].description == "Grocery Store"
+
+    def test_detect_csv_columns_explicit_delimiter(self):
+        from app.services.import_service import detect_csv_columns
+        csv_content = "data;descricao;valor\n15/01/2026;Mercado;-120.50\n"
+        columns = detect_csv_columns(csv_content.encode("utf-8"), delimiter=";")
+        assert columns == ["data", "descricao", "valor"]
+
     def test_parse_csv_empty_file(self):
         """A CSV with only headers and no data rows should return empty list."""
         csv_content = "date,description,amount\n"

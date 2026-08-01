@@ -29,13 +29,16 @@ async def test_create_and_list_template(session: AsyncSession, test_user, test_w
             name="Extrato Nubank",
             column_mapping={"date": "Data", "amount": "Valor"},
             date_format="DD/MM/YYYY",
+            delimiter=";",
         ),
     )
     assert created.name == "Extrato Nubank"
+    assert created.delimiter == ";"
 
     templates = await import_template_service.list_templates(session, test_workspace.id, test_account.id)
     assert len(templates) == 1
     assert templates[0].column_mapping == {"date": "Data", "amount": "Valor"}
+    assert templates[0].delimiter == ";"
 
 
 @pytest.mark.asyncio
