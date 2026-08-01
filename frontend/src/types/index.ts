@@ -470,20 +470,6 @@ export interface LoanImportResult {
   errors: { row: number; message: string }[]
 }
 
-export interface ImportTemplate {
-  id: string
-  account_id: string
-  name: string
-  column_mapping: Record<string, string>
-  date_format: string | null
-  flip_amount: boolean
-  split_columns: boolean
-  inflow_column: string | null
-  outflow_column: string | null
-  delimiter: string | null
-  created_at: string
-}
-
 export interface ImportLog {
   id: string
   user_id: string

@@ -29,7 +29,6 @@ import type {
   CategoryExportPayload,
   CategoryImportResponse,
   ImportLog,
-  ImportTemplate,
   AssetImportResult,
   LoanDetails,
   LoanInstallment,
@@ -1260,31 +1259,6 @@ export const loans = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return data
-  },
-}
-
-// Import Templates (saved CSV mapping presets per account)
-export const importTemplates = {
-  list: async (accountId?: string): Promise<ImportTemplate[]> => {
-    const { data } = await api.get('/import-templates', { params: accountId ? { account_id: accountId } : undefined })
-    return data
-  },
-  create: async (template: {
-    account_id: string
-    name: string
-    column_mapping: Record<string, string>
-    date_format?: string | null
-    flip_amount?: boolean
-    split_columns?: boolean
-    inflow_column?: string | null
-    outflow_column?: string | null
-    delimiter?: string | null
-  }): Promise<ImportTemplate> => {
-    const { data } = await api.post('/import-templates', template)
-    return data
-  },
-  delete: async (id: string): Promise<void> => {
-    await api.delete(`/import-templates/${id}`)
   },
 }
 

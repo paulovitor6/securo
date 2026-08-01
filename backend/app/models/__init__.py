@@ -10,7 +10,6 @@ from app.models.rule import Rule
 from app.models.recurring_transaction import RecurringTransaction
 from app.models.budget import Budget
 from app.models.import_log import ImportLog
-from app.models.import_template import ImportTemplate
 from app.models.loan_details import LoanDetails
 from app.models.loan_installment import LoanInstallment
 from app.models.asset import Asset
@@ -47,7 +46,6 @@ __all__ = [
     "RecurringTransaction",
     "Budget",
     "ImportLog",
-    "ImportTemplate",
     "LoanDetails",
     "LoanInstallment",
     "Asset",

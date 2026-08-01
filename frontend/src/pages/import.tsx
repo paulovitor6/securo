@@ -3,15 +3,14 @@ import { getAccountName } from '@/lib/account-utils'
 import { useTranslation } from 'react-i18next'
 import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { transactions as transactionsApi, accounts as accountsApi, importLogs as importLogsApi, importTemplates as importTemplatesApi, categories as categoriesApi, categoryGroups as categoryGroupsApi } from '@/lib/api'
+import { transactions as transactionsApi, accounts as accountsApi, importLogs as importLogsApi, categories as categoriesApi, categoryGroups as categoryGroupsApi } from '@/lib/api'
 import { invalidateFinancialQueries } from '@/lib/invalidate-queries'
 import { formatCurrency } from '@/lib/format'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { ImportPreviewTransaction, ImportReviewTransaction, ImportLog, ImportTemplate } from '@/types'
-import { Upload, FileText, X, CheckCircle2, AlertCircle, History, Trash2, Settings2, Download, Bookmark } from 'lucide-react'
+import type { ImportPreviewTransaction, ImportReviewTransaction, ImportLog } from '@/types'
+import { Upload, FileText, X, CheckCircle2, AlertCircle, History, Trash2, Settings2, Download } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { PageHeader } from '@/components/page-header'
 import { ImportSummaryBar } from '@/components/import-summary-bar'
@@ -85,9 +84,6 @@ export default function ImportPage() {
   const [csvOutflowColumn, setCsvOutflowColumn] = useState('')
   const [csvColumnMapping, setCsvColumnMapping] = useState<Record<string, string>>({})
   const [csvDelimiter, setCsvDelimiter] = useState('')
-  const [selectedTemplateId, setSelectedTemplateId] = useState('')
-  const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false)
-  const [newTemplateName, setNewTemplateName] = useState('')
 
   const { data: accountsList } = useQuery({
     queryKey: ['accounts'],
@@ -108,62 +104,6 @@ export default function ImportPage() {
     queryKey: ['import-logs'],
     queryFn: importLogsApi.list,
   })
-
-  const { data: accountTemplates = [] } = useQuery({
-    queryKey: ['import-templates', selectedAccount],
-    queryFn: () => importTemplatesApi.list(selectedAccount),
-    enabled: !!selectedAccount,
-  })
-
-  const saveTemplateMutation = useMutation({
-    mutationFn: (name: string) => importTemplatesApi.create({
-      account_id: selectedAccount,
-      name,
-      column_mapping: csvColumnMapping,
-      date_format: csvDateFormat || null,
-      flip_amount: csvFlipAmount,
-      split_columns: csvSplitColumns,
-      inflow_column: csvInflowColumn || null,
-      outflow_column: csvOutflowColumn || null,
-      delimiter: csvDelimiter || null,
-    }),
-    onSuccess: (template) => {
-      queryClient.invalidateQueries({ queryKey: ['import-templates', selectedAccount] })
-      setSelectedTemplateId(template.id)
-      setSaveTemplateDialogOpen(false)
-      setNewTemplateName('')
-      toast.success(t('import.templateSaved'))
-    },
-  })
-
-  const deleteTemplateMutation = useMutation({
-    mutationFn: (id: string) => importTemplatesApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['import-templates', selectedAccount] })
-      setSelectedTemplateId('')
-      toast.success(t('import.templateDeleted'))
-    },
-  })
-
-  function applyTemplate(template: ImportTemplate) {
-    setSelectedTemplateId(template.id)
-    setCsvDateFormat(template.date_format ?? '')
-    setCsvFlipAmount(template.flip_amount)
-    setCsvSplitColumns(template.split_columns)
-    setCsvInflowColumn(template.inflow_column ?? '')
-    setCsvOutflowColumn(template.outflow_column ?? '')
-    setCsvColumnMapping(template.column_mapping)
-    setCsvDelimiter(template.delimiter ?? '')
-    rePreview({
-      date_format: template.date_format ?? '',
-      flip_amount: template.flip_amount,
-      split: template.split_columns,
-      inflow: template.inflow_column ?? '',
-      outflow: template.outflow_column ?? '',
-      mapping: template.column_mapping,
-      delimiter: template.delimiter ?? '',
-    })
-  }
 
   const previewMutation = useMutation({
     mutationFn: async ({ files, options }: { files: File[]; options?: { date_format?: string; flip_amount?: boolean; inflow_column?: string; outflow_column?: string; column_mapping?: Record<string, string>; delimiter?: string } }) => {
@@ -526,51 +466,6 @@ export default function ImportPage() {
                 <p className="text-xs font-medium text-muted-foreground">{t('import.csvOptions')}</p>
               </div>
 
-              {selectedAccount && (
-                <div className="flex flex-wrap items-end gap-2 mb-4 pb-4 border-b border-border">
-                  <div className="flex-1 min-w-[200px]">
-                    <Label className="text-xs text-muted-foreground mb-1 block">{t('import.useTemplate')}</Label>
-                    <select
-                      className="w-full border border-border rounded-md px-3 py-1.5 text-sm bg-background focus:outline-none focus-visible:ring-ring/30 focus-visible:ring-[2px]"
-                      value={selectedTemplateId}
-                      onChange={(e) => {
-                        const template = accountTemplates.find(tpl => tpl.id === e.target.value)
-                        if (template) applyTemplate(template)
-                        else setSelectedTemplateId('')
-                      }}
-                    >
-                      <option value="">{t('import.noTemplate')}</option>
-                      {accountTemplates.map(tpl => (
-                        <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {selectedTemplateId && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 h-8"
-                      onClick={() => deleteTemplateMutation.mutate(selectedTemplateId)}
-                      disabled={deleteTemplateMutation.isPending}
-                    >
-                      <Trash2 size={12} />
-                      <span className="hidden sm:inline">{t('import.deleteTemplate')}</span>
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 h-8"
-                    onClick={() => setSaveTemplateDialogOpen(true)}
-                  >
-                    <Bookmark size={12} />
-                    <span className="hidden sm:inline">{t('import.saveAsTemplate')}</span>
-                  </Button>
-                </div>
-              )}
-
               {previewData.parse_error && (
                 <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg mb-3">
                   <AlertCircle size={14} className="shrink-0 mt-0.5" />
@@ -815,36 +710,6 @@ export default function ImportPage() {
           </div>
         )}
       </div>
-
-      {/* Save as template dialog */}
-      <Dialog open={saveTemplateDialogOpen} onOpenChange={setSaveTemplateDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('import.saveAsTemplate')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>{t('import.templateName')}</Label>
-            <Input
-              value={newTemplateName}
-              onChange={(e) => setNewTemplateName(e.target.value)}
-              placeholder={t('import.templateNamePlaceholder')}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSaveTemplateDialogOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              type="button"
-              disabled={!newTemplateName.trim() || saveTemplateMutation.isPending}
-              onClick={() => saveTemplateMutation.mutate(newTemplateName.trim())}
-            >
-              {t('common.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
