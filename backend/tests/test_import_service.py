@@ -110,6 +110,33 @@ class TestParseCsv:
         assert transactions[1].amount == Decimal("200.00")
         assert transactions[1].type == "credit"
 
+    def test_parse_csv_minus_before_rs_prefix(self):
+        """"-R$  120,50" (minus sign *before* the currency symbol, with extra
+        spacing) used to be silently dropped: stripping only the literal
+        "R$" left "-  120,50" — a gap sitting between the sign and the
+        digits that Decimal() rejects because .strip() only trims the ends,
+        not the middle."""
+        csv_content = (
+            'data,descricao,valor\n'
+            '10/02/2026,ASSINATURA,"-R$  120,50"\n'
+            '11/02/2026,ASSINATURA2,"-R$ 45,00"\n'
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+
+        assert len(transactions) == 2
+        assert transactions[0].amount == Decimal("120.50")
+        assert transactions[0].type == "debit"
+        assert transactions[1].amount == Decimal("45.00")
+        assert transactions[1].type == "debit"
+
+    def test_normalize_amount_handles_internal_whitespace(self):
+        from app.services.import_service import normalize_amount
+        assert normalize_amount("-R$  120,50") == "-120.50"
+        assert normalize_amount("- R$ 120,50") == "-120.50"
+        assert normalize_amount("R$ -120,50") == "-120.50"
+        assert normalize_amount("R$120,50") == "120.50"
+        assert normalize_amount("1 234,56") == "1234.56"
+
     def test_parse_csv_with_bom(self):
         """CSV encoded with UTF-8 BOM should be parsed correctly."""
         # Encode with utf-8-sig which prepends BOM bytes; parse_csv decodes with utf-8-sig

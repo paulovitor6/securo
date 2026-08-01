@@ -749,9 +749,19 @@ def normalize_amount(amount_str: str) -> str:
     Example:
         1.442,20 -> 1442.20
         1,442.20 -> 1442.20
+        -R$  120,50 -> -120.50
+
+    `Decimal()` only tolerates whitespace at the very start/end of the
+    string, not in the middle — so "-R$  120,50" (minus before the currency
+    symbol) can't just have "R$" cut out and the ends `.strip()`ped: that
+    leaves "-  120,50", with the gap now sitting between the sign and the
+    digits, which `Decimal()` rejects. Stripping *all* whitespace (there's
+    no legitimate case where a space carries meaning inside an amount here)
+    avoids that regardless of where the sign/currency symbol landed.
     """
 
-    amount_str = amount_str.replace('R$', '').strip()
+    amount_str = amount_str.replace('R$', '')
+    amount_str = re.sub(r'\s+', '', amount_str)
 
     if ',' in amount_str and '.' in amount_str:
         if amount_str.rfind(',') > amount_str.rfind('.'):
