@@ -512,6 +512,8 @@ export interface ImportPreviewTransaction {
   excluded?: boolean
   category_id?: string | null
   force_uncategorized?: boolean
+  installment_number?: number | null
+  total_installments?: number | null
 }
 
 export interface ImportReviewTransaction extends ImportPreviewTransaction {

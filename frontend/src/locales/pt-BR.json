@@ -952,6 +952,8 @@
     "mapCategory": "Coluna de categoria",
     "mapCurrency": "Coluna de moeda",
     "mapFxRate": "Coluna de câmbio",
+    "mapInstallment": "Coluna de parcela",
+    "installmentDetected": "Parcela detectada — pela coluna mapeada ou pelo texto da descrição (ex: \"PARC 3/12\")",
     "useTemplate": "Usar template salvo",
     "noTemplate": "Nenhum template",
     "saveAsTemplate": "Salvar como template",

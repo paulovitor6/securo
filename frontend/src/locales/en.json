@@ -952,6 +952,8 @@
     "mapCategory": "Category column",
     "mapCurrency": "Currency column",
     "mapFxRate": "FX rate column",
+    "mapInstallment": "Installment column",
+    "installmentDetected": "Installment detected — from the mapped column or the description text (e.g. \"PARC 3/12\")",
     "useTemplate": "Use saved template",
     "noTemplate": "No template",
     "saveAsTemplate": "Save as template",

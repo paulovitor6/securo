@@ -16,7 +16,10 @@ from app.services.import_service import (
     parse_qif,
     parse_camt,
     import_transactions,
+    derive_installment_from_description,
+    enrich_with_category_suggestions,
 )
+from app.schemas.transaction import TransactionImport
 
 
 class TestParseCsv:
@@ -2334,3 +2337,145 @@ async def test_import_tolerates_duplicate_external_id_rows(
         )
     )).scalars().all()
     assert len(remaining) == 2
+
+
+class TestInstallmentDetection:
+    """Credit-card installment ("parcela") detection during import — either
+    from a dedicated column or, as a fallback, from the description text."""
+
+    def test_derive_from_description_slash_form(self):
+        assert derive_installment_from_description("AMAZON BR PARC 03/12") == (3, 12)
+
+    def test_derive_from_description_dash_form(self):
+        assert derive_installment_from_description("LOJA XYZ PARC. 3-6") == (3, 6)
+
+    def test_derive_from_description_de_form(self):
+        assert derive_installment_from_description("LOJA XYZ - PARCELA 3 DE 6") == (3, 6)
+
+    def test_derive_from_description_case_insensitive(self):
+        assert derive_installment_from_description("compra parc 1/2 mercado") == (1, 2)
+
+    def test_derive_from_description_no_keyword_is_not_matched(self):
+        """A bare "N/M"-shaped substring without the "PARC" keyword must not
+        be misread as an installment — e.g. a date fragment or ratio."""
+        assert derive_installment_from_description("PAGAMENTO REF 15/12") == (None, None)
+
+    def test_derive_from_description_similar_word_is_not_matched(self):
+        """"PARCIAL" starts with "PARC" but isn't an installment marker."""
+        assert derive_installment_from_description("PAGAMENTO PARCIAL FATURA") == (None, None)
+
+    def test_derive_from_description_rejects_nonsensical_numbers(self):
+        """number > total ("parcela 9 de 3") can't be a real installment."""
+        assert derive_installment_from_description("COMPRA PARC 9/3") == (None, None)
+
+    def test_derive_from_description_no_match_returns_none(self):
+        assert derive_installment_from_description("UBER TRIP CENTRO") == (None, None)
+        assert derive_installment_from_description(None) == (None, None)
+        assert derive_installment_from_description("") == (None, None)
+
+    def test_parse_csv_dedicated_installment_column(self):
+        csv_content = (
+            "date,description,amount,parcela\n"
+            "2026-01-10,SHOPEE,-50.00,03/12\n"
+            "2026-01-11,UBER,-20.00,\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert transactions[0].installment_number == 3
+        assert transactions[0].total_installments == 12
+        # No value in the column for this row — left unset here; the
+        # description-fallback only runs later, in enrich_with_category_suggestions.
+        assert transactions[1].installment_number is None
+
+    def test_parse_csv_explicit_column_mapping_for_installment(self):
+        csv_content = (
+            "date,description,amount,num_parcelas\n"
+            "2026-01-10,SHOPEE,-50.00,2/5\n"
+        )
+        transactions = parse_csv(
+            csv_content.encode("utf-8"),
+            column_mapping={"installment": "num_parcelas"},
+        )
+        assert transactions[0].installment_number == 2
+        assert transactions[0].total_installments == 5
+
+    @pytest.mark.asyncio
+    async def test_enrich_applies_description_fallback_when_no_column(
+        self, session: AsyncSession, test_workspace,
+    ):
+        """The preview step (not just commit) should already surface an
+        installment detected purely from the description, for every format."""
+        txns = [
+            TransactionImport(
+                description="AMAZON BR PARC 03/12", amount=Decimal("50.00"),
+                date=date(2026, 1, 10), type="debit",
+            ),
+            TransactionImport(
+                description="UBER TRIP CENTRO", amount=Decimal("20.00"),
+                date=date(2026, 1, 11), type="debit",
+            ),
+        ]
+        enriched = await enrich_with_category_suggestions(session, test_workspace.id, txns)
+        assert enriched[0].installment_number == 3
+        assert enriched[0].total_installments == 12
+        assert enriched[1].installment_number is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_does_not_override_explicit_column_value(
+        self, session: AsyncSession, test_workspace,
+    ):
+        """A dedicated column's value always wins, even if the description
+        also happens to contain a (different, or matching) "PARC" marker."""
+        txns = [TransactionImport(
+            description="AMAZON BR PARC 03/12", amount=Decimal("50.00"),
+            date=date(2026, 1, 10), type="debit",
+            installment_number=1, total_installments=2,
+        )]
+        enriched = await enrich_with_category_suggestions(session, test_workspace.id, txns)
+        assert enriched[0].installment_number == 1
+        assert enriched[0].total_installments == 2
+
+    @pytest.mark.asyncio
+    async def test_import_transactions_persists_installment_from_description(
+        self, session: AsyncSession, test_user: User, test_workspace, test_account: Account,
+    ):
+        """End-to-end: a description-only installment marker (as if from an
+        OFX memo, or a CSV with no dedicated column) survives all the way to
+        the persisted Transaction row."""
+        from sqlalchemy import select as sa_select
+        from app.models.transaction import Transaction
+
+        txns = [TransactionImport(
+            description="LOJA XYZ - PARCELA 3 DE 6", amount=Decimal("150.00"),
+            date=date(2026, 1, 10), type="debit",
+        )]
+        imported, skipped, _, _ = await import_transactions(
+            session, test_workspace.id, test_user.id, test_account.id, txns, "ofx",
+            detected_format="ofx",
+        )
+        assert imported == 1
+        tx = (await session.execute(
+            sa_select(Transaction).where(Transaction.description == "LOJA XYZ - PARCELA 3 DE 6")
+        )).scalar_one()
+        assert tx.installment_number == 3
+        assert tx.total_installments == 6
+
+    @pytest.mark.asyncio
+    async def test_import_transactions_persists_explicit_installment_column(
+        self, session: AsyncSession, test_user: User, test_workspace, test_account: Account,
+    ):
+        """The value already resolved during CSV parsing (dedicated column)
+        is what actually gets committed — the description fallback never runs."""
+        from sqlalchemy import select as sa_select
+        from app.models.transaction import Transaction
+
+        csv_content = "date,description,amount,parcela\n2026-01-10,SHOPEE,-50.00,03/12\n"
+        parsed = parse_csv(csv_content.encode("utf-8"))
+        imported, skipped, _, _ = await import_transactions(
+            session, test_workspace.id, test_user.id, test_account.id, parsed, "import",
+        )
+        assert imported == 1
+        tx = (await session.execute(
+            sa_select(Transaction).where(Transaction.description == "SHOPEE")
+        )).scalar_one()
+        assert tx.installment_number == 3
+        assert tx.total_installments == 12

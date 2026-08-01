@@ -163,6 +163,11 @@ class TransactionImport(TransactionBase):
     excluded: bool = False
     category_id: Optional[uuid.UUID] = None
     force_uncategorized: bool = False
+    # Set when a mapped/detected CSV column carries it explicitly; otherwise
+    # left null so `import_transactions` can derive it from the description
+    # as a fallback (see `derive_installment_from_description`).
+    installment_number: Optional[int] = None
+    total_installments: Optional[int] = None
 
 
 class TransactionImportPreview(BaseModel):

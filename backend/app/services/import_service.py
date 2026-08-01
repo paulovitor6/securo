@@ -296,11 +296,57 @@ DATE_FORMAT_MAP = {
 # user-supplied column_mapping and to drive the import-UI dropdowns.
 CSV_MAPPABLE_FIELDS = (
     'date', 'description', 'amount', 'type',
-    'category', 'currency', 'fx_rate', 'inflow', 'outflow',
+    'category', 'currency', 'fx_rate', 'inflow', 'outflow', 'installment',
 )
 
 
 CSV_DELIMITERS = (',', ';', '\t', '|')
+
+# A dedicated "installment" column's value is already isolated, so a bare
+# "3/12" (optionally prefixed with a "Parc"/"Parcela" label some exports
+# still include) is anchored to the *whole* value — no free-text scanning.
+_INSTALLMENT_COLUMN_RE = re.compile(
+    r'^\s*(?:parc(?:ela)?\.?\s*)?0*(\d{1,2})\s*(?:/|-|de)\s*0*(\d{1,2})\s*$',
+    re.IGNORECASE,
+)
+# Derived from free-text (the transaction description, when there's no
+# dedicated column): requires the literal "PARC"/"PARCELA" keyword right
+# before the number pair, so a coincidental "N/M"-shaped substring elsewhere
+# in the description (a date fragment, a product code) is never misread as
+# an installment marker.
+_INSTALLMENT_DESCRIPTION_RE = re.compile(
+    r'PARC(?:ELA)?\.?\s*0*(\d{1,2})\s*(?:/|-|DE)\s*0*(\d{1,2})\b',
+    re.IGNORECASE,
+)
+
+
+def _match_installment(text: str | None, pattern: "re.Pattern[str]") -> tuple[int | None, int | None]:
+    """Extract (installment_number, total_installments) from `text`, or (None, None).
+
+    Sanity-bounded: rejects number > total (parcela 5 de 3 makes no sense)
+    and totals over 99 (well past any real consumer-credit installment plan)
+    so a false-positive match can't produce a nonsensical badge.
+    """
+    if not text:
+        return None, None
+    m = pattern.search(text)
+    if not m:
+        return None, None
+    number, total = int(m.group(1)), int(m.group(2))
+    if number < 1 or total < number or total > 99:
+        return None, None
+    return number, total
+
+
+def derive_installment_from_description(description: str | None) -> tuple[int | None, int | None]:
+    """Fallback installment detection from the transaction description alone.
+
+    Applied uniformly to every import format (CSV without an installment
+    column, OFX, QIF, CAMT) in `import_transactions`, since many Brazilian
+    card issuers embed it in the memo either way, e.g. "AMAZON BR PARC
+    03/12" or "LOJA XYZ - PARCELA 3 DE 6".
+    """
+    return _match_installment(description, _INSTALLMENT_DESCRIPTION_RE)
 
 
 def _sniff_csv_dialect(text: str):
@@ -372,6 +418,7 @@ def parse_csv(
     category_cols = ['category', 'categoria']
     currency_cols = ['currency', 'moeda', 'currency_code']
     fx_rate_cols = ['fx_rate', 'fx_rate_used', 'taxa_cambio', 'exchange_rate', 'taxa']
+    installment_cols = ['installment', 'installments', 'parcela', 'parcelas']
 
     # Normalize the user-supplied column mapping (Securo field -> CSV header).
     mapping = {
@@ -422,6 +469,7 @@ def parse_csv(
     category_col = resolve_col('category', category_cols)
     currency_col = resolve_col('currency', currency_cols)
     fx_rate_col = resolve_col('fx_rate', fx_rate_cols)
+    installment_col = resolve_col('installment', installment_cols)
 
     if not date_col or not desc_col:
         raise ValueError(
@@ -516,12 +564,22 @@ def parse_csv(
                 except Exception:
                     pass
 
+        description = row[desc_col].strip()
+        # A mapped/detected installment column always wins; otherwise leave
+        # it unset here — `import_transactions` derives it from the
+        # description as a fallback, applied the same way for every format.
+        installment_number = installment_total = None
+        if installment_col and row.get(installment_col):
+            installment_number, installment_total = _match_installment(row[installment_col], _INSTALLMENT_COLUMN_RE)
+
         transactions.append(TransactionImport(
-            description=row[desc_col].strip(),
+            description=description,
             amount=abs(amount),
             date=txn_date,
             type=txn_type,
             currency=txn_currency,
+            installment_number=installment_number,
+            total_installments=installment_total,
             fx_rate=txn_fx_rate,
             category_name=category_name,
         ))
@@ -534,6 +592,14 @@ async def enrich_with_category_suggestions(
     workspace_id: uuid.UUID,
     transactions: list[TransactionImport],
 ) -> list[TransactionImport]:
+    # Description-derived installment fallback, applied here (not just at
+    # commit time) so the preview/review table can already show it for
+    # every format — an explicit column (set by the format's own parser)
+    # always wins and is left untouched.
+    for txn in transactions:
+        if txn.installment_number is None:
+            txn.installment_number, txn.total_installments = derive_installment_from_description(txn.description)
+
     result = await session.execute(
         select(Rule)
         .where(Rule.workspace_id == workspace_id, Rule.is_active == True)
@@ -708,6 +774,15 @@ async def import_transactions(
         else:
             category_id = user_category_id or suggested_cat_id or csv_category_id
 
+        # An explicit installment column (CSV) always wins; otherwise fall
+        # back to reading it off the description — applied here so every
+        # format (CSV without that column, OFX, QIF, CAMT) benefits, not
+        # just CSV's own column-mapping path.
+        installment_number = txn_data.installment_number
+        total_installments = txn_data.total_installments
+        if installment_number is None:
+            installment_number, total_installments = derive_installment_from_description(txn_data.description)
+
         transaction = Transaction(
             user_id=user_id,
             workspace_id=workspace_id,
@@ -724,6 +799,8 @@ async def import_transactions(
             payee_id=import_payee_id,
             category_id=category_id,
             recurring_transaction_id=recurring_link.id if recurring_link else None,
+            installment_number=installment_number,
+            total_installments=total_installments,
         )
         apply_effective_date(transaction, account)
 

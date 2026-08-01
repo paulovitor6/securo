@@ -35,6 +35,7 @@ const CSV_MAPPING_FIELDS = [
   { key: 'category', label: 'import.mapCategory' },
   { key: 'currency', label: 'import.mapCurrency' },
   { key: 'fx_rate', label: 'import.mapFxRate' },
+  { key: 'installment', label: 'import.mapInstallment' },
 ] as const
 
 // `sourceFileIndex` (not the filename) is the grouping key used at import
@@ -221,6 +222,8 @@ export default function ImportPage() {
             ? (rt.selected_category_id ?? undefined)
             : (rt.suggested_category_id ?? undefined),
           force_uncategorized: rt.selected_category_id === null,
+          installment_number: rt.installment_number ?? undefined,
+          total_installments: rt.total_installments ?? undefined,
         }))
         const result = await transactionsApi.import(
           selectedAccount,
