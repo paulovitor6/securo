@@ -282,6 +282,11 @@ DATE_FORMAT_MAP = {
     'DD/MM/YYYY': '%d/%m/%Y',
     'MM/DD/YYYY': '%m/%d/%Y',
     'YYYY-MM-DD': '%Y-%m-%d',
+    # Some Brazilian bank exports (Pix receipts, etc.) write the timestamp
+    # column with a literal "às" between date and time, e.g. "15/01/26 às
+    # 14:30:15". `.date()` in the caller drops the time component, keeping
+    # just the date.
+    'DD/MM/YY HH:MM:SS': '%d/%m/%y às %H:%M:%S',
 }
 
 # Securo fields a CSV column can be mapped to. Used to validate the

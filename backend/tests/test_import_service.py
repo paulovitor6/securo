@@ -233,6 +233,18 @@ class TestParseCsv:
         assert len(transactions) == 1
         assert transactions[0].date == date(2026, 4, 3)
 
+    def test_parse_csv_dd_mm_yy_with_time_format(self):
+        """'DD/MM/YY às HH:MM:SS' — some Brazilian bank exports (Pix
+        receipts) write the date column with a literal 'às' before the time;
+        the time component is parsed but dropped, only the date is kept."""
+        csv_content = (
+            "date,description,amount\n"
+            "15/01/26 às 14:30:15,PIX RECEBIDO,150.00\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"), date_format="DD/MM/YY HH:MM:SS")
+        assert len(transactions) == 1
+        assert transactions[0].date == date(2026, 1, 15)
+
     def test_parse_csv_flip_amount(self):
         """Flip amount should negate amounts, swapping credit/debit."""
         csv_content = (
