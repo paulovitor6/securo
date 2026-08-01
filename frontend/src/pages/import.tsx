@@ -586,6 +586,7 @@ export default function ImportPage() {
                     <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                     <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                     <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                    <option value="DD/MM/YY">DD/MM/YY</option>
                     <option value="DD/MM/YY HH:MM:SS">DD/MM/YY às HH:MM:SS</option>
                   </select>
                 </div>

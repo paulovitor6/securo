@@ -260,6 +260,46 @@ class TestParseCsv:
         assert len(transactions) == 1
         assert transactions[0].date == date(2026, 4, 3)
 
+    def test_parse_csv_dd_mm_yy_no_time_auto_detected(self):
+        """A plain 2-digit-year date ("30/01/26", no time) must parse even
+        without an explicit date_format — previously none of the fallback
+        formats accepted a 2-digit year, so every row silently vanished."""
+        csv_content = "date,description,amount\n30/01/26,PAYMENT,-100.00\n"
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert len(transactions) == 1
+        assert transactions[0].date == date(2026, 1, 30)
+
+    def test_parse_csv_xp_broker_statement(self):
+        """Real-world regression: an XP broker statement export — ';'
+        delimiter, a separate (unused) 'Hora' column, 2-digit-year dates
+        with no time in the date column, and 'R$' amounts with the minus
+        sign before the currency symbol on outgoing Pix transfers."""
+        csv_content = (
+            "Data;Hora;Descricao;Valor;Saldo\n"
+            "30/01/26;05:18:38;Rendimento automático;R$ 1,12;R$ 68.958,91\n"
+            "23/01/26;14:21:39;TED recebida de FUNDO GARANTIDOR DE CREDITOS - FGC;R$ 31.482,72;R$ 68.955,53\n"
+            "16/01/26;16:54:26;Pix enviado para Paulo Vitor Moura Barros Henrique;-R$ 20.000,00;R$ 652,63\n"
+            "09/01/26;18:37:12;Pix recebido de Asiel H de Sousa;R$ 20.000,00;R$ 20.652,02\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert len(transactions) == 4
+
+        assert transactions[0].date == date(2026, 1, 30)
+        assert transactions[0].amount == Decimal("1.12")
+        assert transactions[0].type == "credit"
+
+        assert transactions[1].amount == Decimal("31482.72")
+        assert transactions[1].type == "credit"
+
+        # The outgoing Pix ("-R$ 20.000,00") is the case that used to be
+        # dropped by normalize_amount's internal-whitespace bug.
+        assert transactions[2].date == date(2026, 1, 16)
+        assert transactions[2].amount == Decimal("20000.00")
+        assert transactions[2].type == "debit"
+
+        assert transactions[3].amount == Decimal("20000.00")
+        assert transactions[3].type == "credit"
+
     def test_parse_csv_dd_mm_yy_with_time_format(self):
         """'DD/MM/YY às HH:MM:SS' — some Brazilian bank exports (Pix
         receipts) write the date column with a literal 'às' before the time;

@@ -282,6 +282,9 @@ DATE_FORMAT_MAP = {
     'DD/MM/YYYY': '%d/%m/%Y',
     'MM/DD/YYYY': '%m/%d/%Y',
     'YYYY-MM-DD': '%Y-%m-%d',
+    # Some brokers (XP, etc.) export a 2-digit year with no time, e.g.
+    # "30/01/26" — date and time in separate columns.
+    'DD/MM/YY': '%d/%m/%y',
     # Some Brazilian bank exports (Pix receipts, etc.) write the timestamp
     # column with a literal "às" between date and time, e.g. "15/01/26 às
     # 14:30:15". `.date()` in the caller drops the time component, keeping
@@ -431,11 +434,16 @@ def parse_csv(
             f"Expected a column named: {', '.join(amount_cols)}"
         )
 
-    # Determine date formats to try
+    # Determine date formats to try. 4-digit-year formats come first — for
+    # an ambiguous string like "01/02/2026", %d/%m/%y would fail cleanly
+    # anyway (the trailing digits don't fit), but trying the unambiguous
+    # ones first keeps that guarantee obvious. %y itself is unambiguous:
+    # strptime requires an exact 2-digit year, so it never mismatches a
+    # 4-digit one.
     if date_format and date_format in DATE_FORMAT_MAP:
         date_formats = [DATE_FORMAT_MAP[date_format]]
     else:
-        date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y']
+        date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y', '%d/%m/%y']
 
     transactions = []
     for row in reader:
