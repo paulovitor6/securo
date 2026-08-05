@@ -415,6 +415,7 @@
     "transferDescription": "Descrizione",
     "transferNotes": "Note",
     "transferInfo": "Questo è un trasferimento — le modifiche a descrizione, data e note si applicheranno a entrambi i lati",
+    "transferLinkedTo": "Collegata a:",
     "transferTooltip": "I trasferimenti sono esclusi dai totali dei report e della dashboard",
     "installmentTooltip": "Piano rateale — {{count}} addebiti per un totale di {{total}}",
     "billOverrideTooltip": "Spostato all'estratto conto in scadenza il {{date}}",
@@ -510,7 +511,15 @@
     "calendarAddIncome": "Aggiungi entrata",
     "calendarAddExpense": "Aggiungi spesa",
     "calendarSelectedDay": "Giorno selezionato",
-    "calendarNoItems": "Nessuna transazione in questo giorno"
+    "calendarNoItems": "Nessuna transazione in questo giorno",
+    "calendarMetric": "Dati",
+    "calendarBalanceMode": "Saldo",
+    "calendarActivityMode": "Attività",
+    "calendarActivityTrend": "Attività giornaliera",
+    "calendarNoActivity": "Nessuna attività questo mese",
+    "calendarNoMovements": "Nessun movimento",
+    "calendarActualNet": "Netto effettivo",
+    "calendarTransfersExcluded": "I trasferimenti non contano come entrate o spese"
   },
   "accounts": {
     "title": "Conti",
@@ -769,6 +778,7 @@
     "income": "Entrata",
     "frequency": "Frequenza",
     "monthly": "Mensile",
+    "quarterly": "Trimestrale",
     "weekly": "Settimanale",
     "yearly": "Annuale",
     "dayOfMonth": "Giorno del mese",
@@ -827,6 +837,7 @@
     "andOp": "E",
     "orOp": "O",
     "addCondition": "Aggiungi condizione",
+    "blankConditionValue": "Ogni condizione richiede un valore. Una condizione vuota corrisponderebbe a tutte le transazioni.",
     "addAction": "Aggiungi azione",
     "setCategory": "Imposta categoria",
     "setPayee": "Imposta beneficiario",
@@ -975,7 +986,10 @@
     "balanceImpact": "Impatto sul saldo",
     "importedWithExcluded": "{{imported}} importate, {{skipped}} saltate, {{excluded}} escluse",
     "suggested": "Suggerita",
-    "page": "Pagina {{current}} di {{total}}"
+    "page": "Pagina {{current}} di {{total}}",
+    "mapPayee": "Colonna del beneficiario",
+    "mapExternalId": "Colonna dell'ID transazione",
+    "mapNotes": "Colonna delle note"
   },
   "assets": {
     "title": "Beni",
@@ -1221,7 +1235,12 @@
     "typeCompany": "Azienda",
     "allTypes": "Tutti i tipi",
     "filterByType": "Filtra per tipo",
-    "favoritesOnly": "Solo preferiti"
+    "favoritesOnly": "Solo preferiti",
+    "deletedMultiple": "{{count}} beneficiari eliminati",
+    "deleteTitle": "Elimina beneficiario",
+    "deleteConfirm": "Sei sicuro di voler eliminare questo beneficiario? Questo lo rimuoverà anche da tutte le transazioni associate.",
+    "deleteMultipleTitle": "Elimina beneficiari",
+    "deleteMultipleConfirm": "Sei sicuro di voler eliminare i {{count}} beneficiari selezionati? Questo li rimuoverà anche da tutte le transazioni associate."
   },
   "common": {
     "view": "Visualizza",

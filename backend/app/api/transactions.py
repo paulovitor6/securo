@@ -293,6 +293,10 @@ async def create_transfer(
         debit_full = await transaction_service.get_transaction(session, debit_tx.id, ctx.workspace.id)
         credit_full = await transaction_service.get_transaction(session, credit_tx.id, ctx.workspace.id)
         primary_currency = ctx.user.primary_currency
+
+        if debit_tx.transfer_pair_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_pair cannot be null")
+
         return TransferRead(
             debit=_tag_fx_fallback(TransactionRead.model_validate(debit_full, from_attributes=True), primary_currency),
             credit=_tag_fx_fallback(TransactionRead.model_validate(credit_full, from_attributes=True), primary_currency),
@@ -316,6 +320,10 @@ async def link_transfer(
         debit_full = await transaction_service.get_transaction(session, debit_tx.id, ctx.workspace.id)
         credit_full = await transaction_service.get_transaction(session, credit_tx.id, ctx.workspace.id)
         primary_currency = ctx.user.primary_currency
+
+        if debit_tx.transfer_pair_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_pair cannot be null")
+
         return TransferRead(
             debit=_tag_fx_fallback(TransactionRead.model_validate(debit_full, from_attributes=True), primary_currency),
             credit=_tag_fx_fallback(TransactionRead.model_validate(credit_full, from_attributes=True), primary_currency),
@@ -341,6 +349,10 @@ async def create_counterpart(
         debit_full = await transaction_service.get_transaction(session, debit_tx.id, ctx.workspace.id)
         credit_full = await transaction_service.get_transaction(session, credit_tx.id, ctx.workspace.id)
         primary_currency = ctx.user.primary_currency
+
+        if debit_tx.transfer_pair_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_pair cannot be null")
+
         return TransferRead(
             debit=_tag_fx_fallback(TransactionRead.model_validate(debit_full, from_attributes=True), primary_currency),
             credit=_tag_fx_fallback(TransactionRead.model_validate(credit_full, from_attributes=True), primary_currency),
@@ -370,6 +382,26 @@ async def get_transfer_candidates(
         _tag_fx_fallback(TransactionRead.model_validate(tx, from_attributes=True), primary_currency)
         for tx in candidates
     ]
+
+
+@router.get("/{transaction_id}/transfer-pair", response_model=Optional[TransactionRead])
+async def get_transfer_pair(
+    transaction_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(current_workspace),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Return the counterpart leg of a transfer, or null when not linked."""
+    anchor = await transaction_service.get_transaction(session, transaction_id, ctx.workspace.id)
+    if not anchor:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+    pair = await transaction_service.get_transfer_pair(
+        session, ctx.workspace.id, transaction_id
+    )
+    if not pair:
+        return None
+    return _tag_fx_fallback(
+        TransactionRead.model_validate(pair, from_attributes=True), ctx.user.primary_currency
+    )
 
 
 @router.get("/{transaction_id}", response_model=TransactionRead)

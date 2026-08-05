@@ -34,6 +34,9 @@ const CSV_MAPPING_FIELDS = [
   { key: 'category', label: 'import.mapCategory' },
   { key: 'currency', label: 'import.mapCurrency' },
   { key: 'fx_rate', label: 'import.mapFxRate' },
+  { key: 'payee', label: 'import.mapPayee' },
+  { key: 'external_id', label: 'import.mapExternalId' },
+  { key: 'notes', label: 'import.mapNotes' },
   { key: 'installment', label: 'import.mapInstallment' },
 ] as const
 
@@ -156,6 +159,7 @@ export default function ImportPage() {
           currency: rt.currency ?? undefined,
           fx_rate: rt.fx_rate ?? undefined,
           payee_raw: rt.payee_raw ?? undefined,
+          notes: rt.notes ?? undefined,
           category_name: rt.category_name ?? undefined,
           excluded: rt.excluded,
           category_id: rt.selected_category_id !== undefined
@@ -181,6 +185,8 @@ export default function ImportPage() {
     onSuccess: (data) => {
       invalidateFinancialQueries(queryClient)
       queryClient.invalidateQueries({ queryKey: ['import-logs'] })
+      queryClient.invalidateQueries({ queryKey: ['payees'] })
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
       const hasSkippedOrExcluded = (data.skipped ?? 0) > 0 || (data.excluded ?? 0) > 0
       const msg = hasSkippedOrExcluded
         ? t('import.importedWithExcluded', { imported: data.imported, skipped: data.skipped ?? 0, excluded: data.excluded ?? 0 })

@@ -418,6 +418,7 @@
     "transferDescription": "Beschreibung",
     "transferNotes": "Notizen",
     "transferInfo": "Dies ist eine Umbuchung — Änderungen an Beschreibung, Datum und Notizen wirken sich auf beide Seiten aus",
+    "transferLinkedTo": "Verknüpft mit:",
     "transferTooltip": "Umbuchungen sind von den Berichts- und Dashboard-Summen ausgeschlossen",
     "installmentTooltip": "Ratenzahlung — {{count}} Belastungen von insgesamt {{total}}",
     "billOverrideTooltip": "Verschoben auf die Abrechnung fällig am {{date}}",
@@ -510,7 +511,15 @@
     "calendarAddIncome": "Einnahme hinzufügen",
     "calendarAddExpense": "Ausgabe hinzufügen",
     "calendarSelectedDay": "Ausgewählter Tag",
-    "calendarNoItems": "Keine Transaktionen an diesem Tag"
+    "calendarNoItems": "Keine Transaktionen an diesem Tag",
+    "calendarMetric": "Daten",
+    "calendarBalanceMode": "Saldo",
+    "calendarActivityMode": "Aktivität",
+    "calendarActivityTrend": "Tägliche Aktivität",
+    "calendarNoActivity": "Keine Aktivität in diesem Monat",
+    "calendarNoMovements": "Keine Bewegungen",
+    "calendarActualNet": "Tatsächliches Netto",
+    "calendarTransfersExcluded": "Umbuchungen zählen nicht als Einnahmen oder Ausgaben"
   },
   "accounts": {
     "title": "Konten",
@@ -769,6 +778,7 @@
     "income": "Einnahme",
     "frequency": "Häufigkeit",
     "monthly": "Monatlich",
+    "quarterly": "Vierteljährlich",
     "weekly": "Wöchentlich",
     "yearly": "Jährlich",
     "dayOfMonth": "Tag des Monats",
@@ -827,6 +837,7 @@
     "andOp": "UND",
     "orOp": "ODER",
     "addCondition": "Bedingung hinzufügen",
+    "blankConditionValue": "Jede Bedingung benötigt einen Wert. Eine leere Bedingung würde auf alle Transaktionen zutreffen.",
     "addAction": "Aktion hinzufügen",
     "setCategory": "Kategorie festlegen",
     "setPayee": "Zahlungsempfänger festlegen",
@@ -975,7 +986,10 @@
     "balanceImpact": "Auswirkung auf den Saldo",
     "importedWithExcluded": "{{imported}} importiert, {{skipped}} übersprungen, {{excluded}} ausgeschlossen",
     "suggested": "Vorgeschlagen",
-    "page": "Seite {{current}} von {{total}}"
+    "page": "Seite {{current}} von {{total}}",
+    "mapPayee": "Spalte Zahlungsempfänger",
+    "mapExternalId": "Spalte Transaktions-ID",
+    "mapNotes": "Spalte Notizen"
   },
   "assets": {
     "title": "Vermögenswerte",
@@ -1221,7 +1235,12 @@
     "typeCompany": "Unternehmen",
     "allTypes": "Alle Typen",
     "filterByType": "Nach Typ filtern",
-    "favoritesOnly": "Nur Favoriten"
+    "favoritesOnly": "Nur Favoriten",
+    "deletedMultiple": "{{count}} Zahlungsempfänger gelöscht",
+    "deleteTitle": "Zahlungsempfänger löschen",
+    "deleteConfirm": "Möchten Sie diesen Zahlungsempfänger wirklich löschen? Dadurch wird der Zahlungsempfänger auch aus allen zugehörigen Transaktionen entfernt.",
+    "deleteMultipleTitle": "Zahlungsempfänger löschen",
+    "deleteMultipleConfirm": "Möchten Sie die {{count}} ausgewählten Zahlungsempfänger wirklich löschen? Dadurch werden sie auch aus allen zugehörigen Transaktionen entfernt."
   },
   "common": {
     "view": "Ansehen",
