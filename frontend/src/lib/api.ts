@@ -453,6 +453,7 @@ export const transactions = {
     payee_id?: string
     uncategorized?: boolean
     type?: string
+    status?: string
     from?: string
     to?: string
     bill_id?: string
@@ -639,6 +640,7 @@ export const transactions = {
     payee_id?: string
     uncategorized?: boolean
     type?: string
+    status?: string
     from?: string
     to?: string
     q?: string
