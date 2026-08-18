@@ -803,6 +803,13 @@
     "fxEstimate": "Estimate based on latest exchange rate ({{rate}}). Final amount may change."
   },
   "rules": {
+    "searchPlaceholder": "Search rules...",
+    "filterAllCategories": "All categories",
+    "filterAllStatuses": "All rules",
+    "filterActiveOnly": "Active only",
+    "filterInactiveOnly": "Inactive only",
+    "filterAllActions": "All actions",
+    "noFilterResults": "No rule matches these filters",
     "preview": "Preview",
     "previewMatched": "{{matched}} matches",
     "previewSummary": "{{matched}} matching transactions · {{changed}} would change",

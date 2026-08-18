@@ -848,6 +848,13 @@
     "fxEstimate": "Szacunek na podstawie najnowszego kursu wymiany ({{rate}}). Ostateczna kwota może się zmienić."
   },
   "rules": {
+    "searchPlaceholder": "Szukaj reguł...",
+    "filterAllCategories": "Wszystkie kategorie",
+    "filterAllStatuses": "Wszystkie reguły",
+    "filterActiveOnly": "Tylko aktywne",
+    "filterInactiveOnly": "Tylko nieaktywne",
+    "filterAllActions": "Wszystkie akcje",
+    "noFilterResults": "Żadna reguła nie pasuje do tych filtrów",
     "preview": "Podgląd",
     "previewMatched": "dopasowania: {{matched}}",
     "previewSummary": "pasujące transakcje: {{matched}} · zmieniłoby się: {{changed}}",

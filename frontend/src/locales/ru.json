@@ -803,6 +803,13 @@
     "fxEstimate": "Оценка на основе последнего курса ({{rate}}). Итоговая сумма может измениться."
   },
   "rules": {
+    "searchPlaceholder": "Поиск правил...",
+    "filterAllCategories": "Все категории",
+    "filterAllStatuses": "Все правила",
+    "filterActiveOnly": "Только активные",
+    "filterInactiveOnly": "Только неактивные",
+    "filterAllActions": "Все действия",
+    "noFilterResults": "Ни одно правило не соответствует этим фильтрам",
     "preview": "Предпросмотр",
     "previewMatched": "совпадений: {{matched}}",
     "previewSummary": "подходящих транзакций: {{matched}} · изменится: {{changed}}",

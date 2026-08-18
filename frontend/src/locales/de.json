@@ -803,6 +803,13 @@
     "fxEstimate": "Schätzung basierend auf dem aktuellsten Wechselkurs ({{rate}}). Der endgültige Betrag kann abweichen."
   },
   "rules": {
+    "searchPlaceholder": "Regeln suchen...",
+    "filterAllCategories": "Alle Kategorien",
+    "filterAllStatuses": "Alle Regeln",
+    "filterActiveOnly": "Nur aktive",
+    "filterInactiveOnly": "Nur inaktive",
+    "filterAllActions": "Alle Aktionen",
+    "noFilterResults": "Keine Regel entspricht diesen Filtern",
     "preview": "Vorschau",
     "previewMatched": "{{matched}} Treffer",
     "previewSummary": "{{matched}} passende Transaktionen · {{changed}} würden geändert",
