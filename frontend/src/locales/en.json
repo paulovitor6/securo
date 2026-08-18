@@ -803,6 +803,13 @@
     "fxEstimate": "Estimate based on latest exchange rate ({{rate}}). Final amount may change."
   },
   "rules": {
+    "preview": "Preview",
+    "previewMatched": "{{matched}} matches",
+    "previewSummary": "{{matched}} matching transactions · {{changed}} would change",
+    "previewSampleNote": "showing the {{shown}} most recent",
+    "previewNoChange": "no change",
+    "previewEmpty": "No transaction matches these conditions",
+    "previewError": "Could not load the preview",
     "section": "Automation",
     "packs": "Rule Packs",
     "packRuleCount": "{{count}} rules",

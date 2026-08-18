@@ -803,6 +803,13 @@
     "fxEstimate": "Estimación basada en el último tipo de cambio ({{rate}}). El importe final puede cambiar."
   },
   "rules": {
+    "preview": "Vista previa",
+    "previewMatched": "{{matched}} coincidencias",
+    "previewSummary": "{{matched}} transacciones coinciden · {{changed}} cambiarían",
+    "previewSampleNote": "mostrando las {{shown}} más recientes",
+    "previewNoChange": "sin cambios",
+    "previewEmpty": "Ninguna transacción coincide con estas condiciones",
+    "previewError": "No se pudo cargar la vista previa",
     "section": "Automatización",
     "packs": "Paquetes de reglas",
     "packRuleCount": "{{count}} reglas",

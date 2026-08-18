@@ -803,6 +803,13 @@
     "fxEstimate": "Estimativa baseada na última taxa de câmbio ({{rate}}). O valor final pode mudar."
   },
   "rules": {
+    "preview": "Pré-visualizar",
+    "previewMatched": "{{matched}} correspondências",
+    "previewSummary": "{{matched}} transações correspondem · {{changed}} seriam alteradas",
+    "previewSampleNote": "a mostrar as {{shown}} mais recentes",
+    "previewNoChange": "sem alteração",
+    "previewEmpty": "Nenhuma transação corresponde a estas condições",
+    "previewError": "Não foi possível carregar a pré-visualização",
     "section": "Automação",
     "packs": "Pacotes de Regras",
     "packRuleCount": "{{count}} regras",

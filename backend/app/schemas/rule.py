@@ -1,8 +1,9 @@
 # backend/app/schemas/rule.py
+import datetime
 import uuid
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RuleCondition(BaseModel):
@@ -132,3 +133,44 @@ class RuleImportResponse(BaseModel):
     imported: int
     skipped: int
     overwritten: int
+
+
+class RulePreviewRequest(BaseModel):
+    """A draft rule sent from the editor, before it is saved.
+
+    Only the parts that decide what a rule matches and does are needed —
+    name/priority/active play no part in the preview, and an inactive draft is
+    still previewed so the user can check it before switching it on.
+    """
+
+    conditions_op: str = "and"
+    conditions: list[RuleConditionNode]
+    actions: list[RuleAction] = []
+    overwrite_existing_categories: bool = False
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class RulePreviewItem(BaseModel):
+    """One matched transaction plus the category the draft rule would leave it in."""
+
+    id: uuid.UUID
+    date: datetime.date
+    description: str
+    # float, not Decimal: this is display data for the editor's preview table,
+    # and Decimal would serialize as a JSON string the UI has to coerce back.
+    amount: float
+    currency: str
+    type: str
+    current_category_id: Optional[uuid.UUID] = None
+    current_category_name: Optional[str] = None
+    new_category_id: Optional[uuid.UUID] = None
+    new_category_name: Optional[str] = None
+    # False when the rule matches but leaves the transaction as it is — most
+    # often because it already has a category and the draft does not overwrite.
+    will_change: bool
+
+
+class RulePreviewResponse(BaseModel):
+    matched: int
+    will_change: int
+    sample: list[RulePreviewItem]

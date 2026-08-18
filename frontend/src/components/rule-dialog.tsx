@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useMutation } from '@tanstack/react-query'
 import { getAccountName } from '@/lib/account-utils'
+import { rules as rulesApi } from '@/lib/api'
+import { formatCurrency } from '@/lib/format'
+import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
+import { usePrivacyMode } from '@/hooks/use-privacy-mode'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -11,7 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, ChevronDown, Eye, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CategorySelect } from '@/components/category-select'
 import { flattenConditions, isConditionGroup } from '@/lib/rule-conditions'
@@ -187,6 +192,143 @@ function ConditionRow({
       >
         <X size={13} />
       </button>
+    </div>
+  )
+}
+
+/** Collapsible "what would this rule do?" panel.
+ *
+ * Matching runs on the backend against the same engine that applies rules, so
+ * the table shows exactly what saving the draft would produce — including the
+ * transactions it matches but leaves untouched because they already have a
+ * category. Any edit to the draft collapses the panel rather than leaving a
+ * stale table on screen.
+ */
+function RulePreviewPanel({
+  conditionsOp, conditions, actions, overwriteExistingCategories, disabled,
+}: {
+  conditionsOp: 'and' | 'or'
+  conditions: RuleConditionNode[]
+  actions: RuleAction[]
+  overwriteExistingCategories: boolean
+  disabled: boolean
+}) {
+  const { t } = useTranslation()
+  const locale = useDisplayLocale()
+  const dateLocale = useDateLocale()
+  const { mask } = usePrivacyMode()
+  const [open, setOpen] = useState(false)
+
+  const preview = useMutation({
+    mutationFn: () => rulesApi.preview({
+      conditions_op: conditionsOp,
+      conditions,
+      actions,
+      overwrite_existing_categories: overwriteExistingCategories,
+    }),
+  })
+
+  const { reset } = preview
+  useEffect(() => {
+    setOpen(false)
+    reset()
+  }, [conditionsOp, conditions, actions, overwriteExistingCategories, reset])
+
+  const data = preview.data
+
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={() => {
+          setOpen(prev => !prev)
+          if (!open && !data && !preview.isPending) preview.mutate()
+        }}
+      >
+        <span className="flex items-center gap-1.5 font-medium">
+          <Eye size={13} /> {t('rules.preview')}
+        </span>
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          {data && t('rules.previewMatched', { matched: data.matched })}
+          <ChevronDown size={14} className={cn('transition-transform', open && 'rotate-180')} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-border p-3">
+          {preview.isPending ? (
+            <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
+          ) : preview.isError ? (
+            <p className="text-xs text-rose-500">{t('rules.previewError')}</p>
+          ) : !data || data.matched === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('rules.previewEmpty')}</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t('rules.previewSummary', { matched: data.matched, changed: data.will_change })}
+                {data.sample.length < data.matched && (
+                  <> · {t('rules.previewSampleNote', { shown: data.sample.length })}</>
+                )}
+              </p>
+              <div className="max-h-56 overflow-y-auto overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card text-muted-foreground">
+                    <tr className="border-b border-border text-left">
+                      <th className="py-1.5 pr-2 font-medium">{t('transactions.date')}</th>
+                      <th className="py-1.5 pr-2 font-medium">{t('transactions.description')}</th>
+                      <th className="py-1.5 pr-2 text-right font-medium">{t('transactions.amount')}</th>
+                      <th className="py-1.5 font-medium">{t('transactions.category')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {data.sample.map(item => (
+                      <tr key={item.id} className={cn(!item.will_change && 'text-muted-foreground')}>
+                        <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums">
+                          {new Date(item.date + 'T00:00:00').toLocaleDateString(dateLocale)}
+                        </td>
+                        <td className="max-w-[14rem] truncate py-1.5 pr-2" title={item.description}>
+                          {item.description}
+                        </td>
+                        <td className={cn(
+                          'whitespace-nowrap py-1.5 pr-2 text-right tabular-nums',
+                          item.will_change && item.type === 'credit' && 'text-emerald-600',
+                        )}>
+                          {mask(formatCurrency(Math.abs(item.amount), item.currency, locale))}
+                        </td>
+                        <td className="py-1.5">
+                          {item.will_change ? (
+                            <span className="flex items-center gap-1">
+                              <span className="truncate">
+                                {item.current_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                              <ArrowRight size={11} className="shrink-0 text-muted-foreground" />
+                              <span className="truncate font-medium text-emerald-600">
+                                {item.new_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <span className="truncate">
+                                {item.current_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                              <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] font-semibold">
+                                {t('rules.previewNoChange')}
+                              </span>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -522,6 +664,14 @@ export function RuleDialog({
               </span>
             </label>
           )}
+
+          <RulePreviewPanel
+            conditionsOp={conditionsOp}
+            conditions={conditions}
+            actions={actions}
+            overwriteExistingCategories={applyToExisting && overwriteExistingCategories}
+            disabled={hasBlankCondition || conditions.length === 0}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
