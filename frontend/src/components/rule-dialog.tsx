@@ -205,19 +205,22 @@ function ConditionRow({
  * stale table on screen.
  */
 function RulePreviewPanel({
-  conditionsOp, conditions, actions, overwriteExistingCategories, disabled,
+  conditionsOp, conditions, actions, overwriteExistingCategories, disabled, open, onOpenChange,
 }: {
   conditionsOp: 'and' | 'or'
   conditions: RuleConditionNode[]
   actions: RuleAction[]
   overwriteExistingCategories: boolean
   disabled: boolean
+  // Open state lives in the parent: the dialog widens while the table is
+  // expanded, so both have to react to the same toggle.
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
   const locale = useDisplayLocale()
   const dateLocale = useDateLocale()
   const { mask } = usePrivacyMode()
-  const [open, setOpen] = useState(false)
 
   const preview = useMutation({
     mutationFn: () => rulesApi.preview({
@@ -230,9 +233,9 @@ function RulePreviewPanel({
 
   const { reset } = preview
   useEffect(() => {
-    setOpen(false)
+    onOpenChange(false)
     reset()
-  }, [conditionsOp, conditions, actions, overwriteExistingCategories, reset])
+  }, [conditionsOp, conditions, actions, overwriteExistingCategories, onOpenChange, reset])
 
   const data = preview.data
 
@@ -244,7 +247,7 @@ function RulePreviewPanel({
         aria-expanded={open}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={() => {
-          setOpen(prev => !prev)
+          onOpenChange(!open)
           if (!open && !data && !preview.isPending) preview.mutate()
         }}
       >
@@ -289,7 +292,7 @@ function RulePreviewPanel({
                         <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums">
                           {new Date(item.date + 'T00:00:00').toLocaleDateString(dateLocale)}
                         </td>
-                        <td className="max-w-[14rem] truncate py-1.5 pr-2" title={item.description}>
+                        <td className="max-w-[22rem] truncate py-1.5 pr-2" title={item.description}>
                           {item.description}
                         </td>
                         <td className={cn(
@@ -370,6 +373,7 @@ export function RuleDialog({
   const [isActive, setIsActive] = useState(rule?.is_active ?? true)
   const [applyToExisting, setApplyToExisting] = useState(!rule)
   const [overwriteExistingCategories, setOverwriteExistingCategories] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   function updateCondition(i: number, field: keyof RuleCondition, val: string | number) {
     setConditions(prev => prev.map((node, idx) => (
@@ -464,7 +468,12 @@ export function RuleDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent
         aria-describedby={undefined}
-        className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden"
+        className={cn(
+          // The preview table needs room to breathe, so the dialog widens while
+          // it is expanded — same idiom as the transaction dialog's preview pane.
+          'max-h-[90vh] overflow-y-auto overflow-x-hidden transition-[max-width] duration-300',
+          previewOpen ? 'sm:max-w-5xl max-w-2xl' : 'sm:max-w-2xl max-w-2xl',
+        )}
       >
         <DialogHeader>
           <DialogTitle>{rule ? t('rules.editRule') : t('rules.newRule')}</DialogTitle>
@@ -671,6 +680,8 @@ export function RuleDialog({
             actions={actions}
             overwriteExistingCategories={applyToExisting && overwriteExistingCategories}
             disabled={hasBlankCondition || conditions.length === 0}
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
           />
 
           <DialogFooter>
