@@ -23,7 +23,10 @@ import { reports } from '@/lib/api'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { PageHeader } from '@/components/page-header'
-import { CashflowSankey } from '@/components/reports/CashflowSankey'
+import { CashflowSankey, type SankeyCategory } from '@/components/reports/CashflowSankey'
+import { TransactionDrillDown, type DrillDownFilter } from '@/components/transaction-drill-down'
+import { bucketDateRange, trendDateRange, type DateRange } from '@/lib/report-drill-down'
+import { cn } from '@/lib/utils'
 import { usePrivacyMode } from '@/hooks/use-privacy-mode'
 import { useAuth } from '@/contexts/auth-context'
 import { useCollectionFilter } from '@/contexts/collection-filter-context'
@@ -149,6 +152,7 @@ export default function ReportsPage() {
   const [sparklinePage, setSparklinePage] = useState(0)
   const [cashFlowBaseline, setCashFlowBaseline] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [drillDown, setDrillDown] = useState<DrillDownFilter | null>(null)
   // Active Collection filter (issue #105): scope all report tabs to its
   // accounts; net worth also includes the collection's wallets' assets.
   const { activeAccountIds, activeWalletIds } = useCollectionFilter()
@@ -233,6 +237,49 @@ export default function ReportsPage() {
       ...breakdowns,
     } as Record<string, string | number | null>
   })
+
+  // The span the chart actually shows, read back from its buckets so the
+  // drill-down lists the same period the user is looking at.
+  const reportRange = trendDateRange(
+    chartData.map((point) => String(point.date ?? '')),
+    interval,
+  )
+
+  /** Open the transactions behind one category of the report. */
+  function openCategoryDrillDown(category: SankeyCategory, range: DateRange | null) {
+    if (!range) return
+    const isUncategorized = category.key === 'uncategorized'
+    setDrillDown({
+      title: category.label,
+      category_id: isUncategorized ? undefined : category.key,
+      uncategorized: isUncategorized || undefined,
+      // Income is the only inflow group; expenses and investments are both
+      // money leaving the account.
+      type: category.group === 'income' ? 'credit' : 'debit',
+      from: range.from,
+      to: range.to,
+      account_ids: acctIds,
+    })
+  }
+
+  /** Open the transactions behind one bar of the income/expenses chart.
+   *
+   * Recharts hands the clicked entry in different shapes across chart types, so
+   * the bucket label is read from the entry when present and from the data
+   * index otherwise. */
+  function openBucketDrillDown(entry: unknown, index: number, type: 'credit' | 'debit') {
+    const entryPayload = entry as { payload?: { date?: string }; date?: string } | undefined
+    const label = entryPayload?.payload?.date ?? entryPayload?.date ?? String(chartData[index]?.date ?? '')
+    const range = label ? bucketDateRange(label, interval) : null
+    if (!range) return
+    setDrillDown({
+      title: `${t(type === 'credit' ? 'reports.income' : 'reports.expenses')} · ${label}`,
+      type,
+      from: range.from,
+      to: range.to,
+      account_ids: acctIds,
+    })
+  }
 
   const allBreakdowns = summary?.breakdowns ?? []
   const breakdownData = allBreakdowns.filter((b) => b.value > 0)
@@ -647,7 +694,12 @@ export default function ReportsPage() {
             {isLoading ? (
               <div className="px-2"><Skeleton className="h-[360px] w-full" /></div>
             ) : (
-              <CashflowSankey composition={composition} currency={userCurrency} locale={locale} />
+              <CashflowSankey
+                composition={composition}
+                currency={userCurrency}
+                locale={locale}
+                onCategorySelect={(category) => openCategoryDrillDown(category, reportRange)}
+              />
             )}
           </div>
         </div>
@@ -846,8 +898,22 @@ export default function ReportsPage() {
                   contentStyle={tooltipStyle}
                 />
                 <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
-                <Bar dataKey="income" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={24} />
-                <Bar dataKey="expenses" fill="#F43F5E" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                <Bar
+                  dataKey="income"
+                  fill="#10B981"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={24}
+                  cursor="pointer"
+                  onClick={(entry: unknown, index: number) => openBucketDrillDown(entry, index, 'credit')}
+                />
+                <Bar
+                  dataKey="expenses"
+                  fill="#F43F5E"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={24}
+                  cursor="pointer"
+                  onClick={(entry: unknown, index: number) => openBucketDrillDown(entry, index, 'debit')}
+                />
                 <Line
                   type="monotone"
                   dataKey="value"
@@ -1270,10 +1336,40 @@ export default function ReportsPage() {
                         {pageItems.map((item) => {
                           const sparkData = item.series.map((s) => ({ date: s.date, v: s.value }))
                           const gradId = `grad-${item.key}-${item.group}-p${pageIdx}`
+                          // "Other" folds several categories and "baseline" is
+                          // a forecast construct — neither maps to a list of
+                          // transactions.
+                          const drillable = item.key !== 'other' && item.key !== 'baseline' && !!reportRange
+                          const cardLabel = item.key === 'uncategorized'
+                            ? t('reports.uncategorized')
+                            : item.key === 'other' ? t('reports.other') : item.label
+                          const openDrillDown = () => openCategoryDrillDown(
+                            { key: item.key, label: cardLabel, group: item.group },
+                            reportRange,
+                          )
+                          // Typed as div attributes so `role` narrows to AriaRole
+                          // instead of a bare string when spread below.
+                          const drillProps: React.HTMLAttributes<HTMLDivElement> = drillable
+                            ? {
+                                role: 'button',
+                                tabIndex: 0,
+                                onClick: openDrillDown,
+                                onKeyDown: (e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    openDrillDown()
+                                  }
+                                },
+                              }
+                            : {}
                           return (
                             <div
                               key={`${item.key}-${item.group}`}
-                              className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                              className={cn(
+                                'rounded-lg border border-border/50 bg-muted/20 px-3 py-2',
+                                drillable && 'cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/40',
+                              )}
+                              {...drillProps}
                             >
                               <div className="flex items-center gap-1.5 mb-0.5">
                                 <div
@@ -1281,7 +1377,7 @@ export default function ReportsPage() {
                                   style={{ backgroundColor: item.color }}
                                 />
                                 <span className="text-[11px] text-muted-foreground truncate">
-                                  {item.key === 'uncategorized' ? t('reports.uncategorized') : item.key === 'other' ? t('reports.other') : item.label}
+                                  {cardLabel}
                                 </span>
                               </div>
                               <p className="text-xs font-bold tabular-nums text-foreground mb-1">
@@ -1457,6 +1553,8 @@ export default function ReportsPage() {
       </div>
       </>
       )}
+
+      <TransactionDrillDown filter={drillDown} onClose={() => setDrillDown(null)} />
     </div>
   )
 }
