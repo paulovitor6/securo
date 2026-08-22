@@ -1179,24 +1179,21 @@ async def apply_rules_to_transaction(
             category_set = apply_rule_actions(actions, transaction, category_set)
 
 
-class _DraftTransaction:
-    """The four fields rule actions write, detached from the ORM row.
+def _rule_effect_state(tx: Transaction) -> tuple:
+    """Everything rule actions can write, for a before/after comparison.
 
-    The preview runs the real `apply_rule_actions` so it can never drift from
-    what saving the rule would do, but it must not touch the session — a mutated
-    Transaction would be flushed by any later commit on the same request.
+    Mirrors the tuple `apply_single_rule` compares, so a preview counts a
+    transaction as changed exactly when saving the rule would change it.
     """
-
-    __slots__ = ("category_id", "payee_id", "notes", "is_ignored")
-
-    def __init__(self, tx: Transaction):
-        self.category_id = tx.category_id
-        self.payee_id = tx.payee_id
-        self.notes = tx.notes
-        self.is_ignored = tx.is_ignored
-
-    def as_tuple(self):
-        return (self.category_id, self.payee_id, self.notes, self.is_ignored)
+    return (
+        tx.category_id,
+        tx.payee_id,
+        tx.description,
+        tx.original_description,
+        tx.description_is_rule_managed,
+        tx.notes,
+        tx.is_ignored,
+    )
 
 
 async def preview_rule(
@@ -1241,18 +1238,26 @@ async def preview_rule(
     sample: list[RulePreviewItem] = []
 
     for tx in transactions:
-        if not evaluate_conditions(conditions_op, conditions or [], tx):
+        matches = evaluate_conditions(conditions_op, conditions or [], tx)
+        # A rule that renamed this row before should still recognise it, so a
+        # miss is retried against the original text — same as apply_single_rule.
+        if not matches and tx.original_description is not None:
+            original_target = _rule_preview(tx)
+            original_target.description = tx.original_description
+            matches = evaluate_conditions(conditions_op, conditions or [], original_target)
+        if not matches:
             continue
         matched += 1
-        draft = _DraftTransaction(tx)
-        before = draft.as_tuple()
+        draft = _rule_preview(tx)
+        before = _rule_effect_state(draft)
         apply_rule_actions(
             action_dicts,
-            cast(Any, draft),
+            draft,
             category_already_set=tx.category_id is not None
             and not overwrite_existing_categories,
+            skip_description=_has_manual_description(tx),
         )
-        will_change = draft.as_tuple() != before
+        will_change = _rule_effect_state(draft) != before
         if will_change:
             changed += 1
         if len(sample) < limit:

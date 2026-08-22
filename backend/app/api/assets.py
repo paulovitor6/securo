@@ -29,7 +29,7 @@ from app.schemas.asset_import import (
 from app.schemas.asset import (
     AssetBuyCreate,
     AssetCreate,
-    AssetImportResult,
+    AssetImportResult as AssetSnapshotImportResult,
     AssetRead,
     AssetTransactionCreate,
     AssetTransactionRead,
@@ -338,7 +338,7 @@ async def buy_into_holding(
         )
 
 
-@router.post("/import", response_model=AssetImportResult)
+@router.post("/import", response_model=AssetSnapshotImportResult)
 async def import_snapshot(
     file: UploadFile = File(...),
     group_id: Optional[uuid.UUID] = Form(None),
