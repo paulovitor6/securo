@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { flattenConditions, hasConditionGroups, isConditionGroup } from './rule-conditions'
-import type { RuleConditionNode } from '@/types'
+import type { RuleConditionNode } from '../types'
 
 const leaf = { field: 'description', op: 'contains', value: 'UBER' }
 const group = {

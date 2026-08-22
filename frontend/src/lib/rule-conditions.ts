@@ -1,4 +1,4 @@
-import type { RuleCondition, RuleConditionGroup, RuleConditionNode } from '@/types'
+import type { RuleCondition, RuleConditionGroup, RuleConditionNode } from '../types'
 
 /** A condition list entry is a group when it carries its own condition list. */
 export function isConditionGroup(node: RuleConditionNode): node is RuleConditionGroup {

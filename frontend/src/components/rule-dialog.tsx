@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
-import { getAccountName } from '@/lib/account-utils'
+import { getAccountName, sortAccountsByDisplayName } from '@/lib/account-utils'
+import { isInvalidDescriptionAction, parseRulePriority } from '@/lib/rule-form-utils'
 import { rules as rulesApi } from '@/lib/api'
 import { formatCurrency } from '@/lib/format'
 import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
@@ -32,6 +33,7 @@ import type {
 
 const CONDITION_FIELDS = [
   { value: 'description', label: 'rules.fieldDescription' },
+  { value: 'payee', label: 'rules.fieldRawPayee' },
   { value: 'notes', label: 'rules.fieldNotes' },
   { value: 'amount', label: 'rules.fieldAmount' },
   { value: 'type', label: 'rules.fieldType' },
@@ -119,7 +121,7 @@ function ConditionRow({
   condition, accounts, payees, onChange, onRemove,
 }: {
   condition: RuleCondition
-  accounts: { id: string; name: string }[]
+  accounts: { id: string; name: string; display_name?: string | null }[]
   payees: Payee[]
   onChange: (key: keyof RuleCondition, val: string | number) => void
   onRemove: () => void
@@ -350,13 +352,14 @@ export function RuleDialog({
   rule: Rule | null
   categories: Category[]
   categoryGroups: CategoryGroup[]
-  accounts: { id: string; name: string }[]
+  accounts: { id: string; name: string; display_name?: string | null }[]
   payees: Payee[]
   onSave: (data: Partial<Rule>) => void
   loading: boolean
   initialData?: RuleDialogInitialData
 }) {
   const { t } = useTranslation()
+  const sortedAccounts = useMemo(() => sortAccountsByDisplayName(accounts), [accounts])
 
   const defaultConditions: RuleConditionNode[] = initialData?.conditions ?? rule?.conditions ?? [newCondition()]
   const defaultActions: RuleAction[] = initialData?.actions ?? rule?.actions as RuleAction[] ?? [{ op: 'set_category', value: '' }]
@@ -369,7 +372,7 @@ export function RuleDialog({
   const [actions, setActions] = useState<RuleAction[]>(
     defaultActions.length ? defaultActions : [{ op: 'set_category', value: '' }]
   )
-  const [priority, setPriority] = useState(rule?.priority ?? 0)
+  const [priority, setPriority] = useState(String(rule?.priority ?? 0))
   const [isActive, setIsActive] = useState(rule?.is_active ?? true)
   const [applyToExisting, setApplyToExisting] = useState(!rule)
   const [overwriteExistingCategories, setOverwriteExistingCategories] = useState(false)
@@ -448,16 +451,17 @@ export function RuleDialog({
   // A blank condition value matches every transaction, so the rule would apply
   // its actions to the whole ledger. The API rejects these too.
   const hasBlankCondition = flattenConditions(conditions).some(c => String(c.value ?? '').trim() === '')
+  const hasInvalidDescriptionAction = actions.some(isInvalidDescriptionAction)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (hasBlankCondition) return
+    if (hasBlankCondition || hasInvalidDescriptionAction) return
     onSave({
       name,
       conditions_op: conditionsOp,
       conditions,
       actions,
-      priority,
+      priority: parseRulePriority(priority),
       is_active: isActive,
       apply_to_existing: applyToExisting,
       overwrite_existing_categories: applyToExisting && overwriteExistingCategories,
@@ -487,7 +491,17 @@ export function RuleDialog({
             </div>
             <div className="space-y-1.5">
               <Label>{t('rules.priority')}</Label>
-              <Input type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+              <Input
+                type="number"
+                step="1"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+                onBlur={() => {
+                  if (priority.trim() === '' || !Number.isFinite(Number(priority))) {
+                    setPriority('0')
+                  }
+                }}
+              />
             </div>
           </div>
 
@@ -519,7 +533,7 @@ export function RuleDialog({
                       <ConditionRow
                         key={j}
                         condition={cond}
-                        accounts={accounts}
+                        accounts={sortedAccounts}
                         payees={payees}
                         onChange={(field, val) => updateGroupCondition(i, j, field, val)}
                         onRemove={() => removeGroupCondition(i, j)}
@@ -537,7 +551,7 @@ export function RuleDialog({
                   <ConditionRow
                     key={i}
                     condition={node}
-                    accounts={accounts}
+                    accounts={sortedAccounts}
                     payees={payees}
                     onChange={(field, val) => updateCondition(i, field, val)}
                     onRemove={() => removeCondition(i)}
@@ -571,62 +585,81 @@ export function RuleDialog({
           <div className="space-y-2">
             <Label>{t('rules.actions')}</Label>
             <div className="space-y-2">
-              {actions.map((action, i) => (
-                <div key={i} className="relative grid min-w-0 gap-2 pr-7 sm:flex sm:items-center sm:pr-0">
-                  <select
-                    className={`${SELECT_CLASS} w-full sm:w-40 sm:shrink-0`}
-                    value={action.op}
-                    onChange={(e) => updateAction(i, 'op', e.target.value)}
-                  >
-                    <option value="set_category">{t('rules.setCategory')}</option>
-                    <option value="set_payee">{t('rules.setPayee')}</option>
-                    <option value="append_notes">{t('rules.appendNotes')}</option>
-                    <option value="ignore">{t('rules.ignoreAction')}</option>
-                  </select>
-                  {action.op === 'ignore' ? (
-                    <span className="min-w-0 text-sm italic text-muted-foreground sm:w-0 sm:flex-1">
-                      {t('rules.ignoreActionHint')}
-                    </span>
-                  ) : action.op === 'set_category' ? (
-                    <div className="w-full min-w-0 sm:w-0 sm:flex-1">
-                      <CategorySelect
-                        value={action.value}
-                        onChange={(val) => updateAction(i, 'value', val)}
-                        categories={categories}
-                        groups={categoryGroups}
-                        placeholder={t('rules.selectCategory')}
-                        className={`${SELECT_CLASS} w-full`}
-                      />
+              {actions.map((action, i) => {
+                const invalidDescription = isInvalidDescriptionAction(action)
+                return (
+                  <div key={i} className="space-y-1">
+                    <div className="relative grid min-w-0 gap-2 pr-7 sm:flex sm:items-center sm:pr-0">
+                      <select
+                        className={`${SELECT_CLASS} w-full sm:w-40 sm:shrink-0`}
+                        value={action.op}
+                        onChange={(e) => updateAction(i, 'op', e.target.value)}
+                      >
+                        <option value="set_category">{t('rules.setCategory')}</option>
+                        <option value="set_description">{t('rules.setDescription')}</option>
+                        <option value="set_payee">{t('rules.setPayee')}</option>
+                        <option value="append_notes">{t('rules.appendNotes')}</option>
+                        <option value="ignore">{t('rules.ignoreAction')}</option>
+                      </select>
+                      {action.op === 'ignore' ? (
+                        <span className="min-w-0 text-sm italic text-muted-foreground sm:w-0 sm:flex-1">
+                          {t('rules.ignoreActionHint')}
+                        </span>
+                      ) : action.op === 'set_category' ? (
+                        <div className="w-full min-w-0 sm:w-0 sm:flex-1">
+                          <CategorySelect
+                            value={action.value}
+                            onChange={(val) => updateAction(i, 'value', val)}
+                            categories={categories}
+                            groups={categoryGroups}
+                            placeholder={t('rules.selectCategory')}
+                            className={`${SELECT_CLASS} w-full`}
+                          />
+                        </div>
+                      ) : action.op === 'set_payee' ? (
+                        <select
+                          className={`${SELECT_CLASS} w-full min-w-0 sm:w-0 sm:flex-1`}
+                          value={action.value}
+                          onChange={(e) => updateAction(i, 'value', e.target.value)}
+                          required
+                        >
+                          <option value="">{t('rules.selectPayee')}</option>
+                          {payees.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Input
+                          className="h-8 w-full min-w-0 text-sm aria-invalid:border-input aria-invalid:ring-0 dark:aria-invalid:ring-0 sm:w-0 sm:flex-1"
+                          value={action.value}
+                          onChange={(e) => updateAction(i, 'value', e.target.value)}
+                          placeholder={
+                            action.op === 'set_description'
+                              ? t('rules.descriptionValuePlaceholder')
+                              : t('rules.notesValuePlaceholder')
+                          }
+                          maxLength={action.op === 'set_description' ? 500 : undefined}
+                          required={action.op === 'set_description'}
+                          aria-invalid={invalidDescription || undefined}
+                          aria-describedby={invalidDescription ? `action-${i}-description-error` : undefined}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="absolute right-0 top-1 shrink-0 p-1 text-muted-foreground transition-colors hover:text-rose-500 sm:static"
+                        onClick={() => removeAction(i)}
+                      >
+                        <X size={13} />
+                      </button>
                     </div>
-                  ) : action.op === 'set_payee' ? (
-                    <select
-                      className={`${SELECT_CLASS} w-full min-w-0 sm:w-0 sm:flex-1`}
-                      value={action.value}
-                      onChange={(e) => updateAction(i, 'value', e.target.value)}
-                      required
-                    >
-                      <option value="">{t('rules.selectPayee')}</option>
-                      {payees.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Input
-                      className="h-8 w-full min-w-0 text-sm sm:w-0 sm:flex-1"
-                      value={action.value}
-                      onChange={(e) => updateAction(i, 'value', e.target.value)}
-                      placeholder="Ex: #work #reimbursable"
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="absolute right-0 top-1 shrink-0 p-1 text-muted-foreground transition-colors hover:text-rose-500 sm:static"
-                    onClick={() => removeAction(i)}
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ))}
+                    {invalidDescription && (
+                      <p id={`action-${i}-description-error`} className="text-xs text-rose-500">
+                        {t('rules.invalidDescriptionValue')}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
               <button
                 type="button"
                 className="text-xs text-primary hover:text-primary/80 font-medium flex items-center gap-1"
