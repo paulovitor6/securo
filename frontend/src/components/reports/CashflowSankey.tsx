@@ -38,6 +38,17 @@ interface SankeyNodeDatum {
   name: string
   color: string
   side: 'income' | 'center' | 'expense' | 'investment'
+  // The composition entry this node came from, when it maps to exactly one:
+  // the hub, the surplus/deficit bars and the folded "Other" node stand for
+  // several categories (or none), so they carry nothing and stay unclickable.
+  category?: SankeyCategory
+}
+
+/** One composition entry a node stands for, enough to list its transactions. */
+export interface SankeyCategory {
+  key: string
+  label: string
+  group: string
 }
 
 interface SankeyLinkDatum {
@@ -81,9 +92,12 @@ interface CashflowSankeyProps {
   composition: ReportCompositionItem[]
   currency: string
   locale: string
+  /** Called with the category behind a clicked node or flow. Omit to keep the
+   * diagram read-only. */
+  onCategorySelect?: (category: SankeyCategory) => void
 }
 
-export function CashflowSankey({ composition, currency, locale }: CashflowSankeyProps) {
+export function CashflowSankey({ composition, currency, locale, onCategorySelect }: CashflowSankeyProps) {
   const { t } = useTranslation()
   const { privacyMode, MASK } = usePrivacyMode()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -141,6 +155,9 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
         : c.key === 'other' ? t('reports.other')
           : c.label
     const isNeutral = (c: ReportCompositionItem) => c.key === 'uncategorized' || c.key === 'other'
+    // "Other" is a fold of many categories, so it has no single one to open.
+    const categoryFor = (c: ReportCompositionItem): SankeyCategory | undefined =>
+      c.key === 'other' ? undefined : { key: c.key, label: labelFor(c), group: c.group }
 
     income.forEach((c, i) =>
       pushNode({
@@ -148,6 +165,7 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
         name: labelFor(c),
         color: isNeutral(c) ? NEUTRAL_COLOR : INCOME_COLOR,
         side: 'income',
+        category: categoryFor(c),
       }),
     )
 
@@ -171,6 +189,7 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
         name: labelFor(c),
         color: isNeutral(c) ? NEUTRAL_COLOR : EXPENSE_COLOR,
         side: 'expense',
+        category: categoryFor(c),
       }),
     )
 
@@ -180,6 +199,7 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
         name: c.key === 'other' ? t('reports.other') : c.label,
         color: c.key === 'other' ? NEUTRAL_COLOR : INVEST_COLOR,
         side: 'investment',
+        category: categoryFor(c),
       }),
     )
 
@@ -303,6 +323,12 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
 
   const linkDimmed = (i: number) => hover !== null && !activeLinks.has(i)
   const nodeDimmed = (idx: number) => hover !== null && !activeNodes.has(idx)
+  // A flow stands for the category at whichever end isn't the hub.
+  const linkCategory = (link: { source: unknown; target: unknown }) => {
+    const source = link.source as SankeyNodeDatum
+    const target = link.target as SankeyNodeDatum
+    return target.id === 'center' ? source.category : target.category
+  }
 
   return (
     <div ref={containerRef} className="w-full privacy-sensitive">
@@ -339,6 +365,8 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
               const dimmed = linkDimmed(i)
               const active = hover !== null && activeLinks.has(i)
               const pct = total > 0 ? ((link.value / total) * 100).toFixed(1) : '0'
+              const category = linkCategory(link)
+              const clickable = !!(category && onCategorySelect)
               return (
                 <path
                   key={i}
@@ -346,7 +374,8 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
                   stroke={`url(#flow-grad-${i})`}
                   strokeOpacity={dimmed ? 0.07 : active ? 0.6 : 0.4}
                   strokeWidth={Math.max(1.5, link.width ?? 1)}
-                  style={{ transition: 'stroke-opacity 0.2s ease' }}
+                  style={{ transition: 'stroke-opacity 0.2s ease', cursor: clickable ? 'pointer' : undefined }}
+                  onClick={clickable ? () => onCategorySelect!(category!) : undefined}
                 >
                   <title>
                     {(link.target as SankeyNodeDatum).id === 'center'
@@ -417,11 +446,18 @@ export function CashflowSankey({ composition, currency, locale }: CashflowSankey
               const onLeft = x0 < width / 2
               const labelX = onLeft ? x1 + 8 : x0 - 8
               const ly = labelY.get(i) ?? (y0 + y1) / 2
+              const category = node.category
+              const clickable = !!(category && onCategorySelect)
               return (
                 <g
                   key={i}
-                  style={{ transition: 'opacity 0.2s ease', opacity: dimmed ? 0.35 : 1 }}
+                  style={{
+                    transition: 'opacity 0.2s ease',
+                    opacity: dimmed ? 0.35 : 1,
+                    cursor: clickable ? 'pointer' : undefined,
+                  }}
                   onMouseEnter={() => setHover({ kind: 'node', index: i })}
+                  onClick={clickable ? () => onCategorySelect!(category!) : undefined}
                 >
                   <rect x={x0} y={y0} width={Math.max(1, x1 - x0)} height={nodeHeight} fill={node.color} rx={3}>
                     <title>{node.name}: {fmtAmount(node.value ?? 0)}</title>
