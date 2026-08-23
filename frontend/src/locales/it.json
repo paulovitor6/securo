@@ -840,6 +840,13 @@
     "fxEstimate": "Stima basata sull'ultimo tasso di cambio ({{rate}}). L'importo finale può variare."
   },
   "rules": {
+    "preview": "Anteprima",
+    "previewMatched": "{{matched}} corrispondenze",
+    "previewSummary": "{{matched}} transazioni corrispondono · {{changed}} verrebbero modificate",
+    "previewSampleNote": "mostrando le {{shown}} più recenti",
+    "previewNoChange": "nessuna modifica",
+    "previewEmpty": "Nessuna transazione corrisponde a queste condizioni",
+    "previewError": "Impossibile caricare l'anteprima",
     "section": "Automazione",
     "packs": "Pacchetti di regole",
     "packRuleCount": "{{count}} regole",

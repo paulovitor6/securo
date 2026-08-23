@@ -891,6 +891,13 @@
     "fxEstimate": "Szacunek na podstawie najnowszego kursu wymiany ({{rate}}). Ostateczna kwota może się zmienić."
   },
   "rules": {
+    "preview": "Podgląd",
+    "previewMatched": "dopasowania: {{matched}}",
+    "previewSummary": "pasujące transakcje: {{matched}} · zmieniłoby się: {{changed}}",
+    "previewSampleNote": "pokazano {{shown}} najnowszych",
+    "previewNoChange": "bez zmian",
+    "previewEmpty": "Żadna transakcja nie spełnia tych warunków",
+    "previewError": "Nie udało się wczytać podglądu",
     "section": "Automatyzacja",
     "packs": "Pakiety reguł",
     "packRuleCount_one": "{{count}} reguła",

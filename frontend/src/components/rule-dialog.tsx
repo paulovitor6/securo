@@ -1,7 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useMutation } from '@tanstack/react-query'
 import { getAccountName, sortAccountsByDisplayName } from '@/lib/account-utils'
 import { isInvalidDescriptionAction, parseRulePriority } from '@/lib/rule-form-utils'
+import { rules as rulesApi } from '@/lib/api'
+import { formatCurrency } from '@/lib/format'
+import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
+import { usePrivacyMode } from '@/hooks/use-privacy-mode'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -12,7 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, ChevronDown, Eye, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CategorySelect } from '@/components/category-select'
 import { flattenConditions, isConditionGroup } from '@/lib/rule-conditions'
@@ -193,6 +198,146 @@ function ConditionRow({
   )
 }
 
+/** Collapsible "what would this rule do?" panel.
+ *
+ * Matching runs on the backend against the same engine that applies rules, so
+ * the table shows exactly what saving the draft would produce — including the
+ * transactions it matches but leaves untouched because they already have a
+ * category. Any edit to the draft collapses the panel rather than leaving a
+ * stale table on screen.
+ */
+function RulePreviewPanel({
+  conditionsOp, conditions, actions, overwriteExistingCategories, disabled, open, onOpenChange,
+}: {
+  conditionsOp: 'and' | 'or'
+  conditions: RuleConditionNode[]
+  actions: RuleAction[]
+  overwriteExistingCategories: boolean
+  disabled: boolean
+  // Open state lives in the parent: the dialog widens while the table is
+  // expanded, so both have to react to the same toggle.
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const locale = useDisplayLocale()
+  const dateLocale = useDateLocale()
+  const { mask } = usePrivacyMode()
+
+  const preview = useMutation({
+    mutationFn: () => rulesApi.preview({
+      conditions_op: conditionsOp,
+      conditions,
+      actions,
+      overwrite_existing_categories: overwriteExistingCategories,
+    }),
+  })
+
+  const { reset } = preview
+  useEffect(() => {
+    onOpenChange(false)
+    reset()
+  }, [conditionsOp, conditions, actions, overwriteExistingCategories, onOpenChange, reset])
+
+  const data = preview.data
+
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={() => {
+          onOpenChange(!open)
+          if (!open && !data && !preview.isPending) preview.mutate()
+        }}
+      >
+        <span className="flex items-center gap-1.5 font-medium">
+          <Eye size={13} /> {t('rules.preview')}
+        </span>
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          {data && t('rules.previewMatched', { matched: data.matched })}
+          <ChevronDown size={14} className={cn('transition-transform', open && 'rotate-180')} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-border p-3">
+          {preview.isPending ? (
+            <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
+          ) : preview.isError ? (
+            <p className="text-xs text-rose-500">{t('rules.previewError')}</p>
+          ) : !data || data.matched === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('rules.previewEmpty')}</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {t('rules.previewSummary', { matched: data.matched, changed: data.will_change })}
+                {data.sample.length < data.matched && (
+                  <> · {t('rules.previewSampleNote', { shown: data.sample.length })}</>
+                )}
+              </p>
+              <div className="max-h-56 overflow-y-auto overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card text-muted-foreground">
+                    <tr className="border-b border-border text-left">
+                      <th className="py-1.5 pr-2 font-medium">{t('transactions.date')}</th>
+                      <th className="py-1.5 pr-2 font-medium">{t('transactions.description')}</th>
+                      <th className="py-1.5 pr-2 text-right font-medium">{t('transactions.amount')}</th>
+                      <th className="py-1.5 font-medium">{t('transactions.category')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {data.sample.map(item => (
+                      <tr key={item.id} className={cn(!item.will_change && 'text-muted-foreground')}>
+                        <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums">
+                          {new Date(item.date + 'T00:00:00').toLocaleDateString(dateLocale)}
+                        </td>
+                        <td className="max-w-[22rem] truncate py-1.5 pr-2" title={item.description}>
+                          {item.description}
+                        </td>
+                        <td className={cn(
+                          'whitespace-nowrap py-1.5 pr-2 text-right tabular-nums',
+                          item.will_change && item.type === 'credit' && 'text-emerald-600',
+                        )}>
+                          {mask(formatCurrency(Math.abs(item.amount), item.currency, locale))}
+                        </td>
+                        <td className="py-1.5">
+                          {item.will_change ? (
+                            <span className="flex items-center gap-1">
+                              <span className="truncate">
+                                {item.current_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                              <ArrowRight size={11} className="shrink-0 text-muted-foreground" />
+                              <span className="truncate font-medium text-emerald-600">
+                                {item.new_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <span className="truncate">
+                                {item.current_category_name ?? t('transactions.uncategorized')}
+                              </span>
+                              <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] font-semibold">
+                                {t('rules.previewNoChange')}
+                              </span>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export interface RuleDialogInitialData {
   name?: string
   conditions?: RuleConditionNode[]
@@ -231,6 +376,7 @@ export function RuleDialog({
   const [isActive, setIsActive] = useState(rule?.is_active ?? true)
   const [applyToExisting, setApplyToExisting] = useState(!rule)
   const [overwriteExistingCategories, setOverwriteExistingCategories] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   function updateCondition(i: number, field: keyof RuleCondition, val: string | number) {
     setConditions(prev => prev.map((node, idx) => (
@@ -326,7 +472,12 @@ export function RuleDialog({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent
         aria-describedby={undefined}
-        className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden"
+        className={cn(
+          // The preview table needs room to breathe, so the dialog widens while
+          // it is expanded — same idiom as the transaction dialog's preview pane.
+          'max-h-[90vh] overflow-y-auto overflow-x-hidden transition-[max-width] duration-300',
+          previewOpen ? 'sm:max-w-5xl max-w-2xl' : 'sm:max-w-2xl max-w-2xl',
+        )}
       >
         <DialogHeader>
           <DialogTitle>{rule ? t('rules.editRule') : t('rules.newRule')}</DialogTitle>
@@ -555,6 +706,16 @@ export function RuleDialog({
               </span>
             </label>
           )}
+
+          <RulePreviewPanel
+            conditionsOp={conditionsOp}
+            conditions={conditions}
+            actions={actions}
+            overwriteExistingCategories={applyToExisting && overwriteExistingCategories}
+            disabled={hasBlankCondition || conditions.length === 0}
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>

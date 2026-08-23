@@ -968,3 +968,110 @@ async def test_grouped_rules_survive_export_import(
     conditions = next(r["conditions"] for r in listed if r["name"] == "Rides")
     assert conditions[1]["op"] == "or"
     assert [c["value"] for c in conditions[1]["conditions"]] == ["UBER", "99POP"]
+
+
+@pytest.mark.asyncio
+async def test_preview_rule_reports_matches_without_saving(
+    client: AsyncClient, auth_headers, test_categories, test_transactions
+):
+    """Preview an unsaved rule: it reports matches but changes nothing."""
+    target = test_categories[0]
+    response = await client.post(
+        "/api/rules/preview",
+        json={
+            "conditions_op": "and",
+            "conditions": [{"field": "description", "op": "contains", "value": "NETFLIX"}],
+            "actions": [{"op": "set_category", "value": str(target.id)}],
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["matched"] == 1
+    assert data["will_change"] == 1
+
+    item = data["sample"][0]
+    assert item["description"] == "NETFLIX"
+    assert item["amount"] == 39.90
+    assert item["current_category_id"] is None
+    assert item["new_category_name"] == target.name
+    assert item["will_change"] is True
+
+    # Nothing was persisted and no rule was created.
+    assert (await client.get("/api/rules", headers=auth_headers)).json() == []
+    txn = (await client.get(f"/api/transactions/{item['id']}", headers=auth_headers)).json()
+    assert txn["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_preview_rule_flags_already_categorized_as_unchanged(
+    client: AsyncClient, auth_headers, test_categories, test_transactions
+):
+    """A match that keeps its category is reported as matched but unchanged."""
+    body = {
+        "conditions_op": "and",
+        "conditions": [{"field": "description", "op": "contains", "value": "UBER"}],
+        "actions": [{"op": "set_category", "value": str(test_categories[0].id)}],
+    }
+
+    data = (await client.post("/api/rules/preview", json=body, headers=auth_headers)).json()
+    assert data["matched"] == 1
+    assert data["will_change"] == 0
+    item = data["sample"][0]
+    assert item["will_change"] is False
+    # Without overwrite the transaction keeps the category it already has.
+    assert item["new_category_name"] == item["current_category_name"] == test_categories[1].name
+
+    overwritten = (
+        await client.post(
+            "/api/rules/preview",
+            json={**body, "overwrite_existing_categories": True},
+            headers=auth_headers,
+        )
+    ).json()
+    assert overwritten["matched"] == 1
+    assert overwritten["will_change"] == 1
+    assert overwritten["sample"][0]["new_category_name"] == test_categories[0].name
+
+
+@pytest.mark.asyncio
+async def test_preview_rule_honors_condition_groups_and_sample_limit(
+    client: AsyncClient, auth_headers, test_categories, test_transactions
+):
+    response = await client.post(
+        "/api/rules/preview",
+        json={
+            "conditions_op": "and",
+            "conditions": [
+                {"field": "type", "op": "equals", "value": "debit"},
+                {"op": "or", "conditions": [
+                    {"field": "description", "op": "contains", "value": "UBER"},
+                    {"field": "description", "op": "contains", "value": "NETFLIX"},
+                ]},
+            ],
+            "actions": [{"op": "set_category", "value": str(test_categories[0].id)}],
+            "limit": 1,
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["matched"] == 2
+    # The sample is capped by `limit`, the counts still cover every match.
+    assert len(data["sample"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_rule_rejects_blank_condition_value(
+    client: AsyncClient, auth_headers, test_categories
+):
+    response = await client.post(
+        "/api/rules/preview",
+        json={
+            "conditions_op": "and",
+            "conditions": [{"field": "description", "op": "contains", "value": "  "}],
+            "actions": [{"op": "set_category", "value": str(test_categories[0].id)}],
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 422

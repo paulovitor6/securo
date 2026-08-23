@@ -24,8 +24,11 @@ import type {
   Budget,
   BudgetVsActual,
   Rule,
+  RuleAction,
+  RuleConditionNode,
   RuleExportPayload,
   RuleImportResponse,
+  RulePreviewResponse,
   ImportLog,
   ImportPreviewTransaction,
   PayeeTaxId,
@@ -905,6 +908,16 @@ export const rules = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/rules/${id}`)
+  },
+  preview: async (draft: {
+    conditions_op: 'and' | 'or'
+    conditions: RuleConditionNode[]
+    actions: RuleAction[]
+    overwrite_existing_categories?: boolean
+    limit?: number
+  }): Promise<RulePreviewResponse> => {
+    const { data } = await api.post('/rules/preview', draft)
+    return data
   },
   applyAll: async (): Promise<{ applied: number }> => {
     const { data } = await api.post('/rules/apply-all')

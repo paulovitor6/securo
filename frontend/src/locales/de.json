@@ -840,6 +840,13 @@
     "fxEstimate": "Schätzung basierend auf dem aktuellsten Wechselkurs ({{rate}}). Der endgültige Betrag kann abweichen."
   },
   "rules": {
+    "preview": "Vorschau",
+    "previewMatched": "{{matched}} Treffer",
+    "previewSummary": "{{matched}} passende Transaktionen · {{changed}} würden geändert",
+    "previewSampleNote": "die {{shown}} neuesten werden angezeigt",
+    "previewNoChange": "keine Änderung",
+    "previewEmpty": "Keine Transaktion erfüllt diese Bedingungen",
+    "previewError": "Vorschau konnte nicht geladen werden",
     "section": "Automatisierung",
     "packs": "Regelpakete",
     "packRuleCount": "{{count}} Regeln",

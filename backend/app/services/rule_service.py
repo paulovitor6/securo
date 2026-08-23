@@ -9,7 +9,14 @@ from app.models.rule import Rule
 from app.models.category import Category
 from app.models.payee import Payee
 from app.models.transaction import Transaction
-from app.schemas.rule import RuleCreate, RuleExportPayload, RuleImportResponse, RuleUpdate
+from app.schemas.rule import (
+    RuleCreate,
+    RuleExportPayload,
+    RuleImportResponse,
+    RulePreviewItem,
+    RulePreviewResponse,
+    RuleUpdate,
+)
 from app.services.rule_engine import evaluate_conditions, apply_rule_actions
 from app.services.category_service import DEFAULT_CATEGORIES_I18N
 
@@ -1170,6 +1177,107 @@ async def apply_rules_to_transaction(
         actions = rule.actions or []
         if evaluate_conditions(rule.conditions_op, conditions, transaction):
             category_set = apply_rule_actions(actions, transaction, category_set)
+
+
+def _rule_effect_state(tx: Transaction) -> tuple:
+    """Everything rule actions can write, for a before/after comparison.
+
+    Mirrors the tuple `apply_single_rule` compares, so a preview counts a
+    transaction as changed exactly when saving the rule would change it.
+    """
+    return (
+        tx.category_id,
+        tx.payee_id,
+        tx.description,
+        tx.original_description,
+        tx.description_is_rule_managed,
+        tx.notes,
+        tx.is_ignored,
+    )
+
+
+async def preview_rule(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    conditions_op: str,
+    conditions: list,
+    actions: list,
+    overwrite_existing_categories: bool = False,
+    limit: int = 20,
+) -> RulePreviewResponse:
+    """Report which existing transactions an unsaved rule would match.
+
+    Read-only counterpart of `apply_single_rule`: same transaction scope, same
+    engine, same overwrite semantics — so the table the editor shows is exactly
+    what saving the rule would produce. Returns the full match/change counts
+    plus the `limit` most recent matches as a sample.
+    """
+    await _validate_rule_definition(session, workspace_id, conditions, [])
+
+    result = await session.execute(
+        select(Transaction)
+        .where(
+            Transaction.workspace_id == workspace_id,
+            Transaction.source != "opening_balance",
+        )
+        .order_by(Transaction.date.desc())
+    )
+    transactions = result.scalars().all()
+
+    category_rows = await session.execute(
+        select(Category.id, Category.name).where(Category.workspace_id == workspace_id)
+    )
+    category_names = {row.id: row.name for row in category_rows}
+
+    action_dicts = [
+        action if isinstance(action, dict) else action.model_dump() for action in actions or []
+    ]
+
+    matched = 0
+    changed = 0
+    sample: list[RulePreviewItem] = []
+
+    for tx in transactions:
+        matches = evaluate_conditions(conditions_op, conditions or [], tx)
+        # A rule that renamed this row before should still recognise it, so a
+        # miss is retried against the original text — same as apply_single_rule.
+        if not matches and tx.original_description is not None:
+            original_target = _rule_preview(tx)
+            original_target.description = tx.original_description
+            matches = evaluate_conditions(conditions_op, conditions or [], original_target)
+        if not matches:
+            continue
+        matched += 1
+        draft = _rule_preview(tx)
+        before = _rule_effect_state(draft)
+        apply_rule_actions(
+            action_dicts,
+            draft,
+            category_already_set=tx.category_id is not None
+            and not overwrite_existing_categories,
+            skip_description=_has_manual_description(tx),
+        )
+        will_change = _rule_effect_state(draft) != before
+        if will_change:
+            changed += 1
+        if len(sample) < limit:
+            sample.append(
+                RulePreviewItem(
+                    id=tx.id,
+                    date=tx.date,
+                    description=tx.description,
+                    amount=tx.amount,
+                    currency=tx.currency,
+                    type=tx.type,
+                    current_category_id=tx.category_id,
+                    current_category_name=category_names.get(tx.category_id),
+                    new_category_id=draft.category_id,
+                    new_category_name=category_names.get(draft.category_id),
+                    will_change=will_change,
+                )
+            )
+
+    return RulePreviewResponse(matched=matched, will_change=changed, sample=sample)
 
 
 async def apply_single_rule(

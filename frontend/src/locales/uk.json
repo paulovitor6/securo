@@ -846,6 +846,13 @@
     "fxEstimate": "Оцінка на основі останнього курсу ({{rate}}). Підсумкова сума може змінитися."
   },
   "rules": {
+    "preview": "Попередній перегляд",
+    "previewMatched": "збігів: {{matched}}",
+    "previewSummary": "відповідних транзакцій: {{matched}} · зміниться: {{changed}}",
+    "previewSampleNote": "показано {{shown}} найновіших",
+    "previewNoChange": "без змін",
+    "previewEmpty": "Жодна транзакція не відповідає цим умовам",
+    "previewError": "Не вдалося завантажити попередній перегляд",
     "section": "Автоматизація",
     "packs": "Пакети правил",
     "packRuleCount": "{{count}} правил",

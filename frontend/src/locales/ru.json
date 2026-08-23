@@ -846,6 +846,13 @@
     "fxEstimate": "Оценка на основе последнего курса ({{rate}}). Итоговая сумма может измениться."
   },
   "rules": {
+    "preview": "Предпросмотр",
+    "previewMatched": "совпадений: {{matched}}",
+    "previewSummary": "подходящих транзакций: {{matched}} · изменится: {{changed}}",
+    "previewSampleNote": "показаны {{shown}} последних",
+    "previewNoChange": "без изменений",
+    "previewEmpty": "Ни одна транзакция не подходит под эти условия",
+    "previewError": "Не удалось загрузить предпросмотр",
     "section": "Автоматизация",
     "packs": "Пакеты правил",
     "packRuleCount": "{{count}} правил",
