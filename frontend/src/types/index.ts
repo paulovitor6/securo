@@ -481,6 +481,54 @@ export interface RuleImportResponse {
   overwritten: number
 }
 
+export interface LoanDetails {
+  id: string
+  name: string
+  currency: string
+  is_archived: boolean
+  principal_amount: number
+  interest_rate: number
+  rate_period: 'annual' | 'monthly'
+  amortization_system: 'sac' | 'price'
+  term_months: number
+  start_date: string
+  insurance_monthly: number | null
+  admin_fee_monthly: number | null
+  payment_category_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LoanInstallment {
+  id: string
+  installment_number: number
+  due_date: string
+  amortization_amount: number
+  interest_amount: number
+  insurance_amount: number
+  admin_fee_amount: number
+  total_amount: number
+  paid_amount: number | null
+  outstanding_balance_after: number
+  status: 'projected' | 'paid'
+  paid_date: string | null
+  transaction_id: string | null
+}
+
+export interface LoanSummary {
+  details: LoanDetails
+  outstanding_balance: number
+  installments_paid: number
+  installments_total: number
+  next_installment: LoanInstallment | null
+}
+
+export interface LoanImportResult {
+  created: number
+  updated: number
+  errors: { row: number; message: string }[]
+}
+
 export interface ImportLog {
   id: string
   user_id: string

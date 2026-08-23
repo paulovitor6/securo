@@ -27,6 +27,10 @@ import type {
   RuleExportPayload,
   RuleImportResponse,
   ImportLog,
+  LoanDetails,
+  LoanInstallment,
+  LoanSummary,
+  LoanImportResult,
   ImportPreviewTransaction,
   PayeeTaxId,
   TaxIdKindOption,
@@ -1272,6 +1276,64 @@ export const importLogs = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/import-logs/${id}`)
+  },
+}
+
+// Loans (financing / real estate loan tracking)
+export interface LoanFormInput {
+  name: string
+  currency: string
+  principal_amount: number
+  interest_rate: number
+  rate_period: 'annual' | 'monthly'
+  amortization_system: 'sac' | 'price'
+  term_months: number
+  start_date: string
+  insurance_monthly?: number | null
+  admin_fee_monthly?: number | null
+  payment_category_id?: string | null
+}
+
+// Loans ("Financiamentos") — a standalone net-worth entity, not an Account.
+export const loans = {
+  list: async (includeArchived = false): Promise<LoanSummary[]> => {
+    const { data } = await api.get('/loans', { params: { include_archived: includeArchived } })
+    return data
+  },
+  get: async (loanId: string): Promise<LoanSummary> => {
+    const { data } = await api.get(`/loans/${loanId}`)
+    return data
+  },
+  create: async (data: LoanFormInput): Promise<LoanSummary> => {
+    const { data: result } = await api.post('/loans', data)
+    return result
+  },
+  update: async (loanId: string, data: LoanFormInput): Promise<LoanSummary> => {
+    const { data: result } = await api.put(`/loans/${loanId}`, data)
+    return result
+  },
+  delete: async (loanId: string): Promise<void> => {
+    await api.delete(`/loans/${loanId}`)
+  },
+  installments: async (loanId: string): Promise<LoanInstallment[]> => {
+    const { data } = await api.get(`/loans/${loanId}/installments`)
+    return data
+  },
+  markInstallment: async (
+    loanId: string,
+    installmentId: string,
+    data: { status?: 'projected' | 'paid'; paid_date?: string | null },
+  ): Promise<LoanInstallment> => {
+    const { data: result } = await api.patch(`/loans/${loanId}/installments/${installmentId}`, data)
+    return result
+  },
+  importFile: async (file: File): Promise<LoanImportResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const { data } = await api.post('/loans/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
   },
 }
 
