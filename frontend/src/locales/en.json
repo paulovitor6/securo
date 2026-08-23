@@ -930,6 +930,14 @@
     "confirmOverwriteImport": "Overwrite and import"
   },
   "categories": {
+    "confirmDeleteSystem": "This is a default category. Deleting it will leave its transactions uncategorized and remove any budgets tied to it. Continue?",
+    "export": "Export",
+    "import": "Import",
+    "exported": "Categories exported",
+    "importConfirmTitle": "Import categories",
+    "importConfirmOverwrite": "This will overwrite categories/groups that already exist with the same name. This can't be undone.",
+    "importSuccess": "{{groups_created}} groups created, {{categories_imported}} categories imported, {{categories_updated}} updated, {{categories_skipped}} skipped",
+    "importInvalidFile": "Invalid file: not a Securo categories export",
     "title": "Categories",
     "addCategory": "Add Category",
     "editCategory": "Edit Category",
@@ -950,6 +958,7 @@
     "ignoreTransferBadge": "Ignore"
   },
   "groups": {
+    "confirmDeleteSystem": "This is a default group. Its categories will become ungrouped. Continue?",
     "title": "Category Groups",
     "add": "Add Group",
     "edit": "Edit Group",

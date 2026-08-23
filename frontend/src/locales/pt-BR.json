@@ -930,6 +930,14 @@
     "confirmOverwriteImport": "Overwrite and import"
   },
   "categories": {
+    "confirmDeleteSystem": "Esta é uma categoria padrão. Excluí-la deixará as transações vinculadas sem categoria e removerá os orçamentos associados a ela. Continuar?",
+    "export": "Exportar",
+    "import": "Importar",
+    "exported": "Categorias exportadas",
+    "importConfirmTitle": "Importar categorias",
+    "importConfirmOverwrite": "Isso vai sobrescrever categorias/grupos já existentes com o mesmo nome. Essa ação não pode ser desfeita.",
+    "importSuccess": "{{groups_created}} grupos criados, {{categories_imported}} categorias importadas, {{categories_updated}} atualizadas, {{categories_skipped}} ignoradas",
+    "importInvalidFile": "Arquivo inválido: não é uma exportação de categorias do Securo",
     "title": "Categorias",
     "addCategory": "Adicionar Categoria",
     "editCategory": "Editar Categoria",
@@ -950,6 +958,7 @@
     "ignoreTransferBadge": "Ignorado"
   },
   "groups": {
+    "confirmDeleteSystem": "Este é um grupo padrão. As categorias dele ficarão sem grupo. Continuar?",
     "title": "Grupos de Categorias",
     "add": "Adicionar Grupo",
     "edit": "Editar Grupo",

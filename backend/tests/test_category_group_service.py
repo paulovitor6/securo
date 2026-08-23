@@ -222,15 +222,14 @@ async def test_delete_custom_group(session: AsyncSession, test_user, test_worksp
 
 
 @pytest.mark.asyncio
-async def test_delete_system_group_rejected(session: AsyncSession, test_user, test_workspace):
+async def test_delete_system_group_succeeds(session: AsyncSession, test_user, test_workspace):
+    """System groups are deletable too — see test_delete_system_category_succeeds."""
     groups = await create_default_groups(session, test_user.id)
     await session.commit()
 
-    # Try deleting a system group
     system_group = groups["housing"]
-    assert await delete_group(session, system_group.id, test_workspace.id) is False
-    # Should still exist
-    assert await get_group(session, system_group.id, test_workspace.id) is not None
+    assert await delete_group(session, system_group.id, test_workspace.id) is True
+    assert await get_group(session, system_group.id, test_workspace.id) is None
 
 
 @pytest.mark.asyncio

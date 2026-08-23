@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { categories as categoriesApi, categoryGroups as groupsApi } from '@/lib/api'
@@ -13,8 +13,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import type { Category, CategoryGroup } from '@/types'
-import { Pencil, Trash2, Plus, ChevronDown, ChevronRight, ChevronsUpDown } from 'lucide-react'
+import type { Category, CategoryExportPayload, CategoryGroup } from '@/types'
+import { Pencil, Trash2, Plus, ChevronDown, ChevronRight, ChevronsUpDown, Download, Upload } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { CategoryIcon } from '@/components/category-icon'
 import { IconPicker } from '@/components/icon-picker'
@@ -54,6 +54,10 @@ export default function CategoriesPage() {
   const [groupFormIcon, setGroupFormIcon] = useState('folder')
   const [groupFormColor, setGroupFormColor] = useState('#6B7280')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [pendingImport, setPendingImport] = useState<CategoryExportPayload | null>(null)
+  const [pendingImportName, setPendingImportName] = useState('')
 
   const { data: groups } = useQuery({
     queryKey: ['category-groups'],
@@ -96,6 +100,40 @@ export default function CategoriesPage() {
     mutationFn: (id: string) => groupsApi.delete(id),
     onSuccess: () => { invalidateAll(); toast.success(t('groups.deleted')) },
   })
+
+  const exportMutation = useMutation({
+    mutationFn: () => categoriesApi.exportFile(),
+    onSuccess: () => toast.success(t('categories.exported')),
+    onError: () => toast.error(t('common.error')),
+  })
+  const importMutation = useMutation({
+    mutationFn: (payload: CategoryExportPayload) => categoriesApi.importFile(payload, true),
+    onSuccess: (data) => {
+      invalidateAll()
+      setImportDialogOpen(false)
+      setPendingImport(null)
+      setPendingImportName('')
+      toast.success(t('categories.importSuccess', data))
+    },
+    onError: () => toast.error(t('common.error')),
+  })
+
+  async function handleImportFile(file: File) {
+    try {
+      const parsed = JSON.parse(await file.text()) as CategoryExportPayload
+      if (parsed.format !== 'securo-categories' || !Array.isArray(parsed.categories)) {
+        toast.error(t('categories.importInvalidFile'))
+        return
+      }
+      setPendingImport(parsed)
+      setPendingImportName(file.name)
+      setImportDialogOpen(true)
+    } catch {
+      toast.error(t('categories.importInvalidFile'))
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
 
   const toggleCollapse = (groupId: string) => {
     setCollapsedGroups((prev) => {
@@ -158,16 +196,17 @@ export default function CategoriesPage() {
           >
             <Pencil size={13} />
           </button>
-          {!cat.is_system && (
-            <button
-              className="p-1.5 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-50 transition-colors"
-              onClick={() => deleteCatMutation.mutate(cat.id)}
-              disabled={deleteCatMutation.isPending}
-              title={t('common.delete')}
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
+          <button
+            className="p-1.5 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-50 transition-colors"
+            onClick={() => {
+              if (cat.is_system && !window.confirm(t('categories.confirmDeleteSystem'))) return
+              deleteCatMutation.mutate(cat.id)
+            }}
+            disabled={deleteCatMutation.isPending}
+            title={t('common.delete')}
+          >
+            <Trash2 size={13} />
+          </button>
         </div>
       )}
     </div>
@@ -200,6 +239,36 @@ export default function CategoriesPage() {
           action={
             canWrite ? (
               <div className="flex gap-2">
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void handleImportFile(file)
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-8"
+                  onClick={() => exportMutation.mutate()}
+                  disabled={exportMutation.isPending}
+                >
+                  <Download size={12} />
+                  <span className="hidden sm:inline">{t('categories.export')}</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-8"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={importMutation.isPending}
+                >
+                  <Upload size={12} />
+                  <span className="hidden sm:inline">{t('categories.import')}</span>
+                </Button>
                 <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => openGroupDialog(null)}>
                   <Plus size={13} /> <span className="hidden sm:inline">{t('groups.add')}</span>
                 </Button>
@@ -234,16 +303,17 @@ export default function CategoriesPage() {
                       >
                         <Pencil size={13} />
                       </button>
-                      {!group.is_system && (
-                        <button
-                          className="p-1.5 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                          onClick={() => deleteGroupMutation.mutate(group.id)}
-                          disabled={deleteGroupMutation.isPending}
-                          title={t('common.delete')}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+                      <button
+                        className="p-1.5 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-50 transition-colors"
+                        onClick={() => {
+                          if (group.is_system && !window.confirm(t('groups.confirmDeleteSystem'))) return
+                          deleteGroupMutation.mutate(group.id)
+                        }}
+                        disabled={deleteGroupMutation.isPending}
+                        title={t('common.delete')}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   )}
                 </div>
@@ -402,6 +472,37 @@ export default function CategoriesPage() {
               <Button type="submit">{t('common.save')}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import confirmation */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('categories.importConfirmTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>{pendingImportName}: {pendingImport?.groups.length ?? 0} {t('groups.title').toLowerCase()}, {pendingImport?.categories.length ?? 0} {t('categories.title').toLowerCase()}</p>
+            <p className="font-medium text-amber-600">{t('categories.importConfirmOverwrite')}</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { setImportDialogOpen(false); setPendingImport(null); setPendingImportName('') }}
+              disabled={importMutation.isPending}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => { if (pendingImport) importMutation.mutate(pendingImport) }}
+              disabled={!pendingImport || importMutation.isPending}
+            >
+              {t('categories.import')}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

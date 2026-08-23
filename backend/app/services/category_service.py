@@ -5,7 +5,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
-from app.schemas.category import CategoryCreate, CategoryUpdate
+from app.models.category_group import CategoryGroup
+from app.schemas.category import (
+    CategoryCreate,
+    CategoryExportItem,
+    CategoryExportPayload,
+    CategoryGroupExportItem,
+    CategoryImportResponse,
+    CategoryUpdate,
+)
 from app.services.category_group_service import CATEGORY_TO_GROUP, create_default_groups
 
 
@@ -145,10 +153,135 @@ async def update_category(
 async def delete_category(
     session: AsyncSession, category_id: uuid.UUID, workspace_id: uuid.UUID
 ) -> bool:
+    # `is_system` categories are deletable too — the default set is a starting
+    # point, not a fixed inventory. Transactions/recurring rows referencing this
+    # category fall back to uncategorized (FK ON DELETE SET NULL); budgets that
+    # require it are removed along with it (FK ON DELETE CASCADE).
     category = await get_category(session, category_id, workspace_id)
-    if not category or category.is_system:
+    if not category:
         return False
 
     await session.delete(category)
     await session.commit()
     return True
+
+
+async def export_categories(session: AsyncSession, workspace_id: uuid.UUID) -> CategoryExportPayload:
+    """Return a portable JSON export of categories/groups for a workspace.
+
+    Groups and categories are serialized by name rather than UUID (same
+    convention as rule_service.export_rules) so the file can be imported into
+    another instance/workspace with different database IDs.
+    """
+    groups_result = await session.execute(
+        select(CategoryGroup).where(CategoryGroup.workspace_id == workspace_id).order_by(CategoryGroup.position)
+    )
+    groups = list(groups_result.scalars().all())
+    group_names = {str(g.id): g.name for g in groups}
+
+    categories = await get_categories(session, workspace_id)
+
+    return CategoryExportPayload(
+        groups=[
+            CategoryGroupExportItem(name=g.name, icon=g.icon, color=g.color, position=g.position)
+            for g in groups
+        ],
+        categories=[
+            CategoryExportItem(
+                name=c.name,
+                icon=c.icon,
+                color=c.color,
+                group_name=group_names.get(str(c.group_id)) if c.group_id else None,
+                treat_as_transfer=c.treat_as_transfer,
+                is_ignored=c.is_ignored,
+            )
+            for c in categories
+        ],
+    )
+
+
+async def import_categories(
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: CategoryExportPayload,
+    overwrite: bool = False,
+) -> CategoryImportResponse:
+    """Import a portable categories/groups payload into a workspace.
+
+    Groups and categories are matched by name (find-or-create). Existing
+    categories are only updated when the caller explicitly passes
+    `overwrite=True`; otherwise they're skipped.
+    """
+    existing_groups_result = await session.execute(
+        select(CategoryGroup).where(CategoryGroup.workspace_id == workspace_id)
+    )
+    groups_by_name = {g.name: g for g in existing_groups_result.scalars().all()}
+
+    groups_created = 0
+    for group_item in payload.groups:
+        existing_group = groups_by_name.get(group_item.name)
+        if existing_group:
+            if overwrite:
+                existing_group.icon = group_item.icon
+                existing_group.color = group_item.color
+                existing_group.position = group_item.position
+            continue
+        new_group = CategoryGroup(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            name=group_item.name,
+            icon=group_item.icon,
+            color=group_item.color,
+            position=group_item.position,
+            is_system=False,
+        )
+        session.add(new_group)
+        await session.flush()
+        groups_by_name[new_group.name] = new_group
+        groups_created += 1
+
+    existing_categories_result = await session.execute(
+        select(Category).where(Category.workspace_id == workspace_id)
+    )
+    categories_by_name = {c.name: c for c in existing_categories_result.scalars().all()}
+
+    categories_imported = 0
+    categories_updated = 0
+    categories_skipped = 0
+    for cat_item in payload.categories:
+        group = groups_by_name.get(cat_item.group_name) if cat_item.group_name else None
+        existing_category = categories_by_name.get(cat_item.name)
+        if existing_category:
+            if overwrite:
+                existing_category.icon = cat_item.icon
+                existing_category.color = cat_item.color
+                existing_category.group_id = group.id if group else None
+                existing_category.treat_as_transfer = cat_item.treat_as_transfer
+                existing_category.is_ignored = cat_item.is_ignored
+                categories_updated += 1
+            else:
+                categories_skipped += 1
+            continue
+        new_category = Category(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            name=cat_item.name,
+            icon=cat_item.icon,
+            color=cat_item.color,
+            group_id=group.id if group else None,
+            is_system=False,
+            treat_as_transfer=cat_item.treat_as_transfer,
+            is_ignored=cat_item.is_ignored,
+        )
+        session.add(new_category)
+        categories_by_name[new_category.name] = new_category
+        categories_imported += 1
+
+    await session.commit()
+    return CategoryImportResponse(
+        groups_created=groups_created,
+        categories_imported=categories_imported,
+        categories_updated=categories_updated,
+        categories_skipped=categories_skipped,
+    )

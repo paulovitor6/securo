@@ -26,6 +26,8 @@ import type {
   Rule,
   RuleExportPayload,
   RuleImportResponse,
+  CategoryExportPayload,
+  CategoryImportResponse,
   ImportLog,
   ImportPreviewTransaction,
   PayeeTaxId,
@@ -283,6 +285,22 @@ export const categories = {
   },
   delete: async (id: string): Promise<void> => {
     await api.delete(`/categories/${id}`)
+  },
+  exportFile: async (): Promise<void> => {
+    const { data } = await api.get('/categories/export', { responseType: 'blob' })
+    const blob = new Blob([data], { type: 'application/json;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `securo-categories-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+  importFile: async (payload: CategoryExportPayload, overwrite = false): Promise<CategoryImportResponse> => {
+    const { data } = await api.post('/categories/import', { payload, overwrite })
+    return data
   },
 }
 

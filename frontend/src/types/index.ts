@@ -481,6 +481,36 @@ export interface RuleImportResponse {
   overwritten: number
 }
 
+export interface CategoryGroupExportItem {
+  name: string
+  icon: string
+  color: string
+  position: number
+}
+
+export interface CategoryExportItem {
+  name: string
+  icon: string
+  color: string
+  group_name: string | null
+  treat_as_transfer: boolean
+  is_ignored: boolean
+}
+
+export interface CategoryExportPayload {
+  format: 'securo-categories'
+  version: number
+  groups: CategoryGroupExportItem[]
+  categories: CategoryExportItem[]
+}
+
+export interface CategoryImportResponse {
+  groups_created: number
+  categories_imported: number
+  categories_updated: number
+  categories_skipped: number
+}
+
 export interface ImportLog {
   id: string
   user_id: string

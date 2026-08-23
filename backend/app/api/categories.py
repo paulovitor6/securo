@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
@@ -9,10 +10,45 @@ from app.core.workspace_context import (
     current_workspace,
     current_writable_workspace,
 )
-from app.schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
+from app.schemas.category import (
+    CategoryCreate,
+    CategoryImportRequest,
+    CategoryImportResponse,
+    CategoryRead,
+    CategoryUpdate,
+)
 from app.services import category_service
 
 router = APIRouter(prefix="/api/categories", tags=["categories"])
+
+
+@router.get("/export")
+async def export_categories(
+    ctx: WorkspaceContext = Depends(current_workspace),
+    session: AsyncSession = Depends(get_async_session),
+):
+    payload = await category_service.export_categories(session, ctx.workspace.id)
+    return JSONResponse(
+        content=payload.model_dump(mode="json"),
+        headers={
+            "Content-Disposition": 'attachment; filename="securo-categories.json"',
+        },
+    )
+
+
+@router.post("/import", response_model=CategoryImportResponse)
+async def import_categories(
+    data: CategoryImportRequest,
+    ctx: WorkspaceContext = Depends(current_writable_workspace),
+    session: AsyncSession = Depends(get_async_session),
+):
+    return await category_service.import_categories(
+        session,
+        ctx.workspace.id,
+        ctx.user_id,
+        data.payload,
+        overwrite=data.overwrite,
+    )
 
 
 @router.get("", response_model=list[CategoryRead])
@@ -53,7 +89,4 @@ async def delete_category(
 ):
     deleted = await category_service.delete_category(session, category_id, ctx.workspace.id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Category not found or is a system category",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
