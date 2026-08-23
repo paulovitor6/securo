@@ -602,6 +602,7 @@ export const transactions = {
     inflow_column?: string
     outflow_column?: string
     column_mapping?: Record<string, string>
+    delimiter?: string
   }): Promise<{ transactions: ImportPreviewTransaction[]; detected_format: string; csv_columns?: string[]; parse_error?: string | null }> => {
     const formData = new FormData()
     formData.append('file', file)
@@ -612,6 +613,7 @@ export const transactions = {
     if (options?.column_mapping && Object.keys(options.column_mapping).length > 0) {
       formData.append('column_mapping', JSON.stringify(options.column_mapping))
     }
+    if (options?.delimiter) formData.append('delimiter', options.delimiter)
     const { data } = await api.post('/transactions/import/preview', formData)
     return data
   },

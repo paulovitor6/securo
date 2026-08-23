@@ -373,6 +373,14 @@ DATE_FORMAT_MAP = {
     'DD/MM/YYYY': '%d/%m/%Y',
     'MM/DD/YYYY': '%m/%d/%Y',
     'YYYY-MM-DD': '%Y-%m-%d',
+    # Some brokers (XP, etc.) export a 2-digit year with no time, e.g.
+    # "30/01/26" — date and time in separate columns.
+    'DD/MM/YY': '%d/%m/%y',
+    # Some Brazilian bank exports (Pix receipts, etc.) write the timestamp
+    # column with a literal "às" between date and time, e.g. "15/01/26 às
+    # 14:30:15". `.date()` in the caller drops the time component, keeping
+    # just the date.
+    'DD/MM/YY HH:MM:SS': '%d/%m/%y às %H:%M:%S',
 }
 
 # Securo fields a CSV column can be mapped to. Used to validate the
@@ -380,8 +388,57 @@ DATE_FORMAT_MAP = {
 CSV_MAPPABLE_FIELDS = (
     'date', 'description', 'amount', 'type',
     'category', 'currency', 'fx_rate', 'inflow', 'outflow',
-    'payee', 'external_id', 'notes',
+    'payee', 'external_id', 'notes', 'installment',
 )
+
+
+CSV_DELIMITERS = (',', ';', '\t', '|')
+
+# A dedicated "installment" column's value is already isolated, so a bare
+# "3/12" (optionally prefixed with a "Parc"/"Parcela" label some exports
+# still include) is anchored to the *whole* value — no free-text scanning.
+_INSTALLMENT_COLUMN_RE = re.compile(
+    r'^\s*(?:parc(?:ela)?\.?\s*)?0*(\d{1,2})\s*(?:/|-|de)\s*0*(\d{1,2})\s*$',
+    re.IGNORECASE,
+)
+# Derived from free-text (the transaction description, when there's no
+# dedicated column): requires the literal "PARC"/"PARCELA" keyword right
+# before the number pair, so a coincidental "N/M"-shaped substring elsewhere
+# in the description (a date fragment, a product code) is never misread as
+# an installment marker.
+_INSTALLMENT_DESCRIPTION_RE = re.compile(
+    r'PARC(?:ELA)?\.?\s*0*(\d{1,2})\s*(?:/|-|DE)\s*0*(\d{1,2})\b',
+    re.IGNORECASE,
+)
+
+
+def _match_installment(text: str | None, pattern: "re.Pattern[str]") -> tuple[int | None, int | None]:
+    """Extract (installment_number, total_installments) from `text`, or (None, None).
+
+    Sanity-bounded: rejects number > total (parcela 5 de 3 makes no sense)
+    and totals over 99 (well past any real consumer-credit installment plan)
+    so a false-positive match can't produce a nonsensical badge.
+    """
+    if not text:
+        return None, None
+    m = pattern.search(text)
+    if not m:
+        return None, None
+    number, total = int(m.group(1)), int(m.group(2))
+    if number < 1 or total < number or total > 99:
+        return None, None
+    return number, total
+
+
+def derive_installment_from_description(description: str | None) -> tuple[int | None, int | None]:
+    """Fallback installment detection from the transaction description alone.
+
+    Applied uniformly to every import format (CSV without an installment
+    column, OFX, QIF, CAMT) in `import_transactions`, since many Brazilian
+    card issuers embed it in the memo either way, e.g. "AMAZON BR PARC
+    03/12" or "LOJA XYZ - PARCELA 3 DE 6".
+    """
+    return _match_installment(description, _INSTALLMENT_DESCRIPTION_RE)
 
 
 def _sniff_csv_dialect(text: str):
@@ -392,15 +449,24 @@ def _sniff_csv_dialect(text: str):
         return csv.excel
 
 
-def detect_csv_columns(content: bytes) -> list[str]:
+def _resolve_delimiter(text: str, delimiter: str | None) -> str:
+    """An explicit delimiter always wins; otherwise sniff it from the file."""
+    if delimiter:
+        return delimiter
+    return _sniff_csv_dialect(text).delimiter
+
+
+def detect_csv_columns(content: bytes, delimiter: str | None = None) -> list[str]:
     """Return the CSV header column names exactly as they appear in the file.
 
     Used by the import preview so the UI can offer accurate column-mapping
-    dropdowns instead of guessing headers client-side.
+    dropdowns instead of guessing headers client-side. `delimiter`, when
+    given, overrides auto-detection (some exports use `;` or tabs that the
+    sniffer occasionally gets wrong).
     """
     text = content.decode('utf-8-sig')  # Handle BOM
-    dialect = _sniff_csv_dialect(text)
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    resolved_delimiter = _resolve_delimiter(text, delimiter)
+    reader = csv.DictReader(io.StringIO(text), delimiter=resolved_delimiter)
     return [f.strip() for f in (reader.fieldnames or []) if f and f.strip()]
 
 
@@ -411,6 +477,7 @@ def parse_csv(
     inflow_column: str | None = None,
     outflow_column: str | None = None,
     column_mapping: dict[str, str] | None = None,
+    delimiter: str | None = None,
 ) -> list[TransactionImport]:
     """Parse CSV file content and return transactions.
 
@@ -424,10 +491,13 @@ def parse_csv(
     - inflow_column/outflow_column: use split columns instead of single amount
     - column_mapping: explicit Securo-field -> CSV-header map. Any field
       present here overrides auto-detection; unmapped fields still auto-detect.
+    - delimiter: explicit column separator (`,`, `;`, tab, `|`). Overrides
+      auto-detection when the sniffer picks the wrong one (small/ambiguous
+      files, descriptions that themselves contain commas, ...).
     """
     text = content.decode('utf-8-sig')  # Handle BOM
-    dialect = _sniff_csv_dialect(text)
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    resolved_delimiter = _resolve_delimiter(text, delimiter)
+    reader = csv.DictReader(io.StringIO(text), delimiter=resolved_delimiter)
 
     # Normalize field names
     fieldnames = [f.lower().strip() if f is not None else "" for f in (reader.fieldnames or [])]
@@ -443,6 +513,7 @@ def parse_csv(
     payee_cols = ['payee', 'merchant', 'beneficiary', 'beneficiario', 'pagador']
     external_id_cols = [] # External ID must be mapped explicitly
     notes_cols = ['notes', 'nota', 'observacao']
+    installment_cols = ['installment', 'installments', 'parcela', 'parcelas']
 
     # Normalize the user-supplied column mapping (Securo field -> CSV header).
     mapping = {
@@ -496,6 +567,7 @@ def parse_csv(
     payee_col = resolve_col('payee', payee_cols)
     external_id_col = resolve_col('external_id', external_id_cols)
     notes_col = resolve_col('notes', notes_cols)
+    installment_col = resolve_col('installment', installment_cols)
 
     if not date_col or not desc_col:
         raise ValueError(
@@ -508,11 +580,16 @@ def parse_csv(
             f"Expected a column named: {', '.join(amount_cols)}"
         )
 
-    # Determine date formats to try
+    # Determine date formats to try. 4-digit-year formats come first — for
+    # an ambiguous string like "01/02/2026", %d/%m/%y would fail cleanly
+    # anyway (the trailing digits don't fit), but trying the unambiguous
+    # ones first keeps that guarantee obvious. %y itself is unambiguous:
+    # strptime requires an exact 2-digit year, so it never mismatches a
+    # 4-digit one.
     if date_format and date_format in DATE_FORMAT_MAP:
         date_formats = [DATE_FORMAT_MAP[date_format]]
     else:
-        date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y', '%d.%m.%Y']
+        date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%m/%d/%Y', '%d.%m.%Y', '%d/%m/%y']
 
     transactions = []
     for row in reader:
@@ -585,16 +662,26 @@ def parse_csv(
                 except Exception:
                     pass
 
+        description = row[desc_col].strip()
+        # A mapped/detected installment column always wins; otherwise leave
+        # it unset here — `import_transactions` derives it from the
+        # description as a fallback, applied the same way for every format.
+        installment_number = installment_total = None
+        if installment_col and row.get(installment_col):
+            installment_number, installment_total = _match_installment(row[installment_col], _INSTALLMENT_COLUMN_RE)
+
         txn_payee = row[payee_col].strip() if payee_col and row.get(payee_col) else None
         txn_external_id = row[external_id_col].strip() if external_id_col and row.get(external_id_col) else None
         txn_notes = row[notes_col].strip() if notes_col and row.get(notes_col) else None
 
         transactions.append(TransactionImport(
-            description=row[desc_col].strip(),
+            description=description,
             amount=abs(amount),
             date=txn_date,
             type=txn_type,
             currency=txn_currency,
+            installment_number=installment_number,
+            total_installments=installment_total,
             fx_rate=txn_fx_rate,
             category_name=category_name,
             payee_raw=txn_payee,
@@ -610,6 +697,14 @@ async def enrich_with_category_suggestions(
     workspace_id: uuid.UUID,
     transactions: list[TransactionImport],
 ) -> list[TransactionImport]:
+    # Description-derived installment fallback, applied here (not just at
+    # commit time) so the preview/review table can already show it for
+    # every format — an explicit column (set by the format's own parser)
+    # always wins and is left untouched.
+    for txn in transactions:
+        if txn.installment_number is None:
+            txn.installment_number, txn.total_installments = derive_installment_from_description(txn.description)
+
     result = await session.execute(
         select(Rule)
         .where(Rule.workspace_id == workspace_id, Rule.is_active == True)
@@ -765,6 +860,15 @@ async def import_transactions(
             else user_category_id or suggested_cat_id or csv_category_id
         )
 
+        # An explicit installment column (CSV) always wins; otherwise fall
+        # back to reading it off the description — applied here so every
+        # format (CSV without that column, OFX, QIF, CAMT) benefits, not
+        # just CSV's own column-mapping path.
+        installment_number = txn_data.installment_number
+        total_installments = txn_data.total_installments
+        if installment_number is None:
+            installment_number, total_installments = derive_installment_from_description(txn_data.description)
+
         incoming = Transaction(
             user_id=user_id,
             workspace_id=workspace_id,
@@ -782,6 +886,8 @@ async def import_transactions(
             payee_id=import_payee_id,
             category_id=category_id,
             notes=getattr(txn_data, "notes", None),
+            installment_number=installment_number,
+            total_installments=total_installments,
         )
         apply_effective_date(incoming, account)
         preview = await preview_rules_for_transaction(
@@ -875,11 +981,21 @@ def normalize_amount(amount_str: str | None) -> str:
     Example:
         1.442,20 -> 1442.20
         1,442.20 -> 1442.20
+        -R$  120,50 -> -120.50
+
+    `Decimal()` only tolerates whitespace at the very start/end of the
+    string, not in the middle — so "-R$  120,50" (minus before the currency
+    symbol) can't just have "R$" cut out and the ends `.strip()`ped: that
+    leaves "-  120,50", with the gap now sitting between the sign and the
+    digits, which `Decimal()` rejects. Stripping *all* whitespace (there's
+    no legitimate case where a space carries meaning inside an amount here)
+    avoids that regardless of where the sign/currency symbol landed.
     """
     if not amount_str:
         return ""
 
-    amount_str = str(amount_str).replace('R$', '').strip()
+    amount_str = str(amount_str).replace('R$', '')
+    amount_str = re.sub(r'\s+', '', amount_str)
 
     if ',' in amount_str and '.' in amount_str:
         if amount_str.rfind(',') > amount_str.rfind('.'):

@@ -46,6 +46,24 @@ async def test_preview_csv_returns_columns(client: AsyncClient, auth_headers, te
 
 
 @pytest.mark.asyncio
+async def test_preview_csv_explicit_delimiter(client: AsyncClient, auth_headers, test_account):
+    """A description containing a comma would confuse the sniffer into
+    picking the wrong delimiter — an explicit `delimiter` form field fixes it."""
+    csv_content = "date;description;amount\n10/02/2026;Uber, viagem centro;-25.50\n".encode("utf-8")
+    response = await client.post(
+        "/api/transactions/import/preview",
+        headers=auth_headers,
+        files={"file": ("extrato.csv", csv_content, "text/csv")},
+        data={"delimiter": ";"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["csv_columns"] == ["date", "description", "amount"]
+    assert len(data["transactions"]) == 1
+    assert data["transactions"][0]["description"] == "Uber, viagem centro"
+
+
+@pytest.mark.asyncio
 async def test_preview_csv_with_column_mapping(client: AsyncClient, auth_headers, test_account):
     """A CSV with non-standard headers parses once columns are mapped."""
     csv_content = b"transaction_date,details,value\n15/02/2026,GROCERY STORE,-80.00\n"
@@ -380,3 +398,33 @@ async def test_import_with_category_override(
     logs_resp = await client.get("/api/import-logs", headers=auth_headers)
     log = next(entry for entry in logs_resp.json() if entry["id"] == import_log_id)
     assert log["transaction_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_detects_installment_from_description(client: AsyncClient, auth_headers, test_account):
+    """No dedicated installment column — the preview should already surface
+    the parcela parsed from the description text, before the user commits."""
+    csv_content = b"data,descricao,valor\n10/02/2026,AMAZON BR PARC 03/12,-150.00\n"
+    response = await client.post(
+        "/api/transactions/import/preview",
+        headers=auth_headers,
+        files={"file": ("extrato.csv", csv_content, "text/csv")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transactions"][0]["installment_number"] == 3
+    assert data["transactions"][0]["total_installments"] == 12
+
+
+@pytest.mark.asyncio
+async def test_preview_detects_installment_from_dedicated_column(client: AsyncClient, auth_headers, test_account):
+    csv_content = b"data,descricao,valor,parcela\n10/02/2026,SHOPEE,-50.00,2/5\n"
+    response = await client.post(
+        "/api/transactions/import/preview",
+        headers=auth_headers,
+        files={"file": ("extrato.csv", csv_content, "text/csv")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transactions"][0]["installment_number"] == 2
+    assert data["transactions"][0]["total_installments"] == 5

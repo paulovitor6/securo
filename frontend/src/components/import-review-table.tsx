@@ -182,7 +182,17 @@ export function ImportReviewTable({
                     {formatLocalDate(tx.date, dateLocale)}
                   </TableCell>
                   <TableCell className={`py-2.5 text-sm ${tx.excluded ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                    {tx.description}
+                    <span className="inline-flex items-center gap-1.5">
+                      {tx.description}
+                      {tx.installment_number != null && tx.total_installments != null && (
+                        <span
+                          className="inline-flex items-center text-[10px] font-bold tabular-nums text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 px-1.5 py-0.5 rounded-full shrink-0"
+                          title={t('import.installmentDetected')}
+                        >
+                          {tx.installment_number}/{tx.total_installments}
+                        </span>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell className={`py-2.5 text-right text-sm font-bold tabular-nums ${tx.type === 'credit' ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {tx.type === 'credit' ? '+' : '−'}{formatCurrency(Math.abs(Number(tx.amount)), userCurrency, locale)}

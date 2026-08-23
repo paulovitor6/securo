@@ -512,10 +512,14 @@ export interface ImportPreviewTransaction {
   category_id?: string | null
   force_uncategorized?: boolean
   notes?: string | null
+  installment_number?: number | null
+  total_installments?: number | null
 }
 
 export interface ImportReviewTransaction extends ImportPreviewTransaction {
   _id: string
+  _sourceFile: string
+  _sourceFileIndex: number
   excluded: boolean
   selected_category_id?: string | null
 }

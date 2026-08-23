@@ -27,6 +27,7 @@ async def preview_import(
     inflow_column: Optional[str] = Form(None),
     outflow_column: Optional[str] = Form(None),
     column_mapping: Optional[str] = Form(None),
+    delimiter: Optional[str] = Form(None),
     # Read-gated on purpose, and the exception is deliberate rather than an
     # oversight. This is a POST because it takes a file upload, not because
     # it changes anything: it parses the upload and returns what *would* be
@@ -83,12 +84,13 @@ async def preview_import(
                     inflow_column=inflow_column,
                     outflow_column=outflow_column,
                     column_mapping=parsed_mapping,
+                    delimiter=delimiter,
                 )
             except ValueError as csv_err:
                 # The CSV's columns couldn't be auto-mapped. As long as we can
                 # still read its headers, return a soft failure so the UI can
                 # show the column-mapping dropdowns instead of a hard error.
-                if not import_service.detect_csv_columns(content):
+                if not import_service.detect_csv_columns(content, delimiter=delimiter):
                     raise
                 transactions = []
                 parse_error = str(csv_err)
@@ -134,7 +136,7 @@ async def preview_import(
     csv_columns: list[str] = []
     if detected_format == "csv":
         try:
-            csv_columns = import_service.detect_csv_columns(content)
+            csv_columns = import_service.detect_csv_columns(content, delimiter=delimiter)
         except Exception:
             csv_columns = []
 

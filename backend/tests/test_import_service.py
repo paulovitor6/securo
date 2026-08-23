@@ -17,7 +17,10 @@ from app.services.import_service import (
     parse_qif,
     parse_camt,
     import_transactions,
+    derive_installment_from_description,
+    enrich_with_category_suggestions,
 )
+from app.schemas.transaction import TransactionImport
 
 
 class TestParseCsv:
@@ -111,6 +114,33 @@ class TestParseCsv:
         assert transactions[1].amount == Decimal("200.00")
         assert transactions[1].type == "credit"
 
+    def test_parse_csv_minus_before_rs_prefix(self):
+        """"-R$  120,50" (minus sign *before* the currency symbol, with extra
+        spacing) used to be silently dropped: stripping only the literal
+        "R$" left "-  120,50" — a gap sitting between the sign and the
+        digits that Decimal() rejects because .strip() only trims the ends,
+        not the middle."""
+        csv_content = (
+            'data,descricao,valor\n'
+            '10/02/2026,ASSINATURA,"-R$  120,50"\n'
+            '11/02/2026,ASSINATURA2,"-R$ 45,00"\n'
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+
+        assert len(transactions) == 2
+        assert transactions[0].amount == Decimal("120.50")
+        assert transactions[0].type == "debit"
+        assert transactions[1].amount == Decimal("45.00")
+        assert transactions[1].type == "debit"
+
+    def test_normalize_amount_handles_internal_whitespace(self):
+        from app.services.import_service import normalize_amount
+        assert normalize_amount("-R$  120,50") == "-120.50"
+        assert normalize_amount("- R$ 120,50") == "-120.50"
+        assert normalize_amount("R$ -120,50") == "-120.50"
+        assert normalize_amount("R$120,50") == "120.50"
+        assert normalize_amount("1 234,56") == "1234.56"
+
     def test_parse_csv_with_bom(self):
         """CSV encoded with UTF-8 BOM should be parsed correctly."""
         # Encode with utf-8-sig which prepends BOM bytes; parse_csv decodes with utf-8-sig
@@ -187,6 +217,31 @@ class TestParseCsv:
         assert transactions[1].amount == Decimal("5000.00")
         assert transactions[1].type == "credit"
 
+    def test_parse_csv_explicit_delimiter_overrides_sniffing(self):
+        """An explicit delimiter is honored even when it would confuse the
+        sniffer (a description that itself contains a comma)."""
+        csv_content = (
+            "date;description;amount\n"
+            "15/01/2026;Grocery, Store & Co;-120.50\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"), delimiter=";")
+
+        assert len(transactions) == 1
+        assert transactions[0].description == "Grocery, Store & Co"
+        assert transactions[0].amount == Decimal("120.50")
+
+    def test_parse_csv_explicit_tab_delimiter(self):
+        csv_content = "date\tdescription\tamount\n2026-01-15\tGrocery Store\t-120.50\n"
+        transactions = parse_csv(csv_content.encode("utf-8"), delimiter="\t")
+        assert len(transactions) == 1
+        assert transactions[0].description == "Grocery Store"
+
+    def test_detect_csv_columns_explicit_delimiter(self):
+        from app.services.import_service import detect_csv_columns
+        csv_content = "data;descricao;valor\n15/01/2026;Mercado;-120.50\n"
+        columns = detect_csv_columns(csv_content.encode("utf-8"), delimiter=";")
+        assert columns == ["data", "descricao", "valor"]
+
     def test_parse_csv_empty_file(self):
         """A CSV with only headers and no data rows should return empty list."""
         csv_content = "date,description,amount\n"
@@ -208,6 +263,58 @@ class TestParseCsv:
         transactions = parse_csv(csv_content.encode("utf-8"), date_format="DD/MM/YYYY")
         assert len(transactions) == 1
         assert transactions[0].date == date(2026, 4, 3)
+
+    def test_parse_csv_dd_mm_yy_no_time_auto_detected(self):
+        """A plain 2-digit-year date ("30/01/26", no time) must parse even
+        without an explicit date_format — previously none of the fallback
+        formats accepted a 2-digit year, so every row silently vanished."""
+        csv_content = "date,description,amount\n30/01/26,PAYMENT,-100.00\n"
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert len(transactions) == 1
+        assert transactions[0].date == date(2026, 1, 30)
+
+    def test_parse_csv_xp_broker_statement(self):
+        """Real-world regression: an XP broker statement export — ';'
+        delimiter, a separate (unused) 'Hora' column, 2-digit-year dates
+        with no time in the date column, and 'R$' amounts with the minus
+        sign before the currency symbol on outgoing Pix transfers."""
+        csv_content = (
+            "Data;Hora;Descricao;Valor;Saldo\n"
+            "30/01/26;05:18:38;Rendimento automático;R$ 1,12;R$ 68.958,91\n"
+            "23/01/26;14:21:39;TED recebida de FUNDO GARANTIDOR DE CREDITOS - FGC;R$ 31.482,72;R$ 68.955,53\n"
+            "16/01/26;16:54:26;Pix enviado para Paulo Vitor Moura Barros Henrique;-R$ 20.000,00;R$ 652,63\n"
+            "09/01/26;18:37:12;Pix recebido de Asiel H de Sousa;R$ 20.000,00;R$ 20.652,02\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert len(transactions) == 4
+
+        assert transactions[0].date == date(2026, 1, 30)
+        assert transactions[0].amount == Decimal("1.12")
+        assert transactions[0].type == "credit"
+
+        assert transactions[1].amount == Decimal("31482.72")
+        assert transactions[1].type == "credit"
+
+        # The outgoing Pix ("-R$ 20.000,00") is the case that used to be
+        # dropped by normalize_amount's internal-whitespace bug.
+        assert transactions[2].date == date(2026, 1, 16)
+        assert transactions[2].amount == Decimal("20000.00")
+        assert transactions[2].type == "debit"
+
+        assert transactions[3].amount == Decimal("20000.00")
+        assert transactions[3].type == "credit"
+
+    def test_parse_csv_dd_mm_yy_with_time_format(self):
+        """'DD/MM/YY às HH:MM:SS' — some Brazilian bank exports (Pix
+        receipts) write the date column with a literal 'às' before the time;
+        the time component is parsed but dropped, only the date is kept."""
+        csv_content = (
+            "date,description,amount\n"
+            "15/01/26 às 14:30:15,PIX RECEBIDO,150.00\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"), date_format="DD/MM/YY HH:MM:SS")
+        assert len(transactions) == 1
+        assert transactions[0].date == date(2026, 1, 15)
 
     def test_parse_csv_flip_amount(self):
         """Flip amount should negate amounts, swapping credit/debit."""
@@ -2433,3 +2540,145 @@ async def test_import_tolerates_duplicate_external_id_rows(
         )
     )).scalars().all()
     assert len(remaining) == 2
+
+
+class TestInstallmentDetection:
+    """Credit-card installment ("parcela") detection during import — either
+    from a dedicated column or, as a fallback, from the description text."""
+
+    def test_derive_from_description_slash_form(self):
+        assert derive_installment_from_description("AMAZON BR PARC 03/12") == (3, 12)
+
+    def test_derive_from_description_dash_form(self):
+        assert derive_installment_from_description("LOJA XYZ PARC. 3-6") == (3, 6)
+
+    def test_derive_from_description_de_form(self):
+        assert derive_installment_from_description("LOJA XYZ - PARCELA 3 DE 6") == (3, 6)
+
+    def test_derive_from_description_case_insensitive(self):
+        assert derive_installment_from_description("compra parc 1/2 mercado") == (1, 2)
+
+    def test_derive_from_description_no_keyword_is_not_matched(self):
+        """A bare "N/M"-shaped substring without the "PARC" keyword must not
+        be misread as an installment — e.g. a date fragment or ratio."""
+        assert derive_installment_from_description("PAGAMENTO REF 15/12") == (None, None)
+
+    def test_derive_from_description_similar_word_is_not_matched(self):
+        """"PARCIAL" starts with "PARC" but isn't an installment marker."""
+        assert derive_installment_from_description("PAGAMENTO PARCIAL FATURA") == (None, None)
+
+    def test_derive_from_description_rejects_nonsensical_numbers(self):
+        """number > total ("parcela 9 de 3") can't be a real installment."""
+        assert derive_installment_from_description("COMPRA PARC 9/3") == (None, None)
+
+    def test_derive_from_description_no_match_returns_none(self):
+        assert derive_installment_from_description("UBER TRIP CENTRO") == (None, None)
+        assert derive_installment_from_description(None) == (None, None)
+        assert derive_installment_from_description("") == (None, None)
+
+    def test_parse_csv_dedicated_installment_column(self):
+        csv_content = (
+            "date,description,amount,parcela\n"
+            "2026-01-10,SHOPEE,-50.00,03/12\n"
+            "2026-01-11,UBER,-20.00,\n"
+        )
+        transactions = parse_csv(csv_content.encode("utf-8"))
+        assert transactions[0].installment_number == 3
+        assert transactions[0].total_installments == 12
+        # No value in the column for this row — left unset here; the
+        # description-fallback only runs later, in enrich_with_category_suggestions.
+        assert transactions[1].installment_number is None
+
+    def test_parse_csv_explicit_column_mapping_for_installment(self):
+        csv_content = (
+            "date,description,amount,num_parcelas\n"
+            "2026-01-10,SHOPEE,-50.00,2/5\n"
+        )
+        transactions = parse_csv(
+            csv_content.encode("utf-8"),
+            column_mapping={"installment": "num_parcelas"},
+        )
+        assert transactions[0].installment_number == 2
+        assert transactions[0].total_installments == 5
+
+    @pytest.mark.asyncio
+    async def test_enrich_applies_description_fallback_when_no_column(
+        self, session: AsyncSession, test_workspace,
+    ):
+        """The preview step (not just commit) should already surface an
+        installment detected purely from the description, for every format."""
+        txns = [
+            TransactionImport(
+                description="AMAZON BR PARC 03/12", amount=Decimal("50.00"),
+                date=date(2026, 1, 10), type="debit",
+            ),
+            TransactionImport(
+                description="UBER TRIP CENTRO", amount=Decimal("20.00"),
+                date=date(2026, 1, 11), type="debit",
+            ),
+        ]
+        enriched = await enrich_with_category_suggestions(session, test_workspace.id, txns)
+        assert enriched[0].installment_number == 3
+        assert enriched[0].total_installments == 12
+        assert enriched[1].installment_number is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_does_not_override_explicit_column_value(
+        self, session: AsyncSession, test_workspace,
+    ):
+        """A dedicated column's value always wins, even if the description
+        also happens to contain a (different, or matching) "PARC" marker."""
+        txns = [TransactionImport(
+            description="AMAZON BR PARC 03/12", amount=Decimal("50.00"),
+            date=date(2026, 1, 10), type="debit",
+            installment_number=1, total_installments=2,
+        )]
+        enriched = await enrich_with_category_suggestions(session, test_workspace.id, txns)
+        assert enriched[0].installment_number == 1
+        assert enriched[0].total_installments == 2
+
+    @pytest.mark.asyncio
+    async def test_import_transactions_persists_installment_from_description(
+        self, session: AsyncSession, test_user: User, test_workspace, test_account: Account,
+    ):
+        """End-to-end: a description-only installment marker (as if from an
+        OFX memo, or a CSV with no dedicated column) survives all the way to
+        the persisted Transaction row."""
+        from sqlalchemy import select as sa_select
+        from app.models.transaction import Transaction
+
+        txns = [TransactionImport(
+            description="LOJA XYZ - PARCELA 3 DE 6", amount=Decimal("150.00"),
+            date=date(2026, 1, 10), type="debit",
+        )]
+        imported, skipped, _, _ = await import_transactions(
+            session, test_workspace.id, test_user.id, test_account.id, txns, "ofx",
+            detected_format="ofx",
+        )
+        assert imported == 1
+        tx = (await session.execute(
+            sa_select(Transaction).where(Transaction.description == "LOJA XYZ - PARCELA 3 DE 6")
+        )).scalar_one()
+        assert tx.installment_number == 3
+        assert tx.total_installments == 6
+
+    @pytest.mark.asyncio
+    async def test_import_transactions_persists_explicit_installment_column(
+        self, session: AsyncSession, test_user: User, test_workspace, test_account: Account,
+    ):
+        """The value already resolved during CSV parsing (dedicated column)
+        is what actually gets committed — the description fallback never runs."""
+        from sqlalchemy import select as sa_select
+        from app.models.transaction import Transaction
+
+        csv_content = "date,description,amount,parcela\n2026-01-10,SHOPEE,-50.00,03/12\n"
+        parsed = parse_csv(csv_content.encode("utf-8"))
+        imported, skipped, _, _ = await import_transactions(
+            session, test_workspace.id, test_user.id, test_account.id, parsed, "import",
+        )
+        assert imported == 1
+        tx = (await session.execute(
+            sa_select(Transaction).where(Transaction.description == "SHOPEE")
+        )).scalar_one()
+        assert tx.installment_number == 3
+        assert tx.total_installments == 12
