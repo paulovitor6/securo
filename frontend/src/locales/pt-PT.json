@@ -840,6 +840,13 @@
     "fxEstimate": "Estimativa baseada na última taxa de câmbio ({{rate}}). O valor final pode mudar."
   },
   "rules": {
+    "searchPlaceholder": "Procurar regras...",
+    "filterAllCategories": "Todas as categorias",
+    "filterAllStatuses": "Todas as regras",
+    "filterActiveOnly": "Apenas ativas",
+    "filterInactiveOnly": "Apenas inativas",
+    "filterAllActions": "Todas as ações",
+    "noFilterResults": "Nenhuma regra corresponde a estes filtros",
     "section": "Automação",
     "packs": "Pacotes de Regras",
     "packRuleCount": "{{count}} regras",

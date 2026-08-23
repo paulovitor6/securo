@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/dialog'
 import type { Category, Payee, Rule, RuleAction, RuleCondition, RuleConditionNode, RuleExportPayload } from '@/types'
 import { isConditionGroup } from '@/lib/rule-conditions'
-import { Trash2, Plus, RefreshCw, Package, Check, ArrowUpDown, ArrowUp, ArrowDown, Download, Upload } from 'lucide-react'
+import { normalizeRuleMatchValue, ruleSearchText } from '@/lib/rule-match-utils'
+import { Trash2, Plus, RefreshCw, Package, Check, ArrowUpDown, ArrowUp, ArrowDown, Download, Upload, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/page-header'
 import { useWorkspace } from '@/contexts/workspace-context'
@@ -121,6 +122,15 @@ function actionSummary(actions: RuleAction[], categories: Category[], payeesList
     return a.op
   }).join('  ') || t('rules.noActions')
 }
+
+const ACTION_FILTERS = [
+  { value: 'set_category', label: 'rules.setCategory' },
+  { value: 'set_payee', label: 'rules.setPayee' },
+  { value: 'append_notes', label: 'rules.appendNotes' },
+  { value: 'ignore', label: 'rules.ignoreAction' },
+] as const
+
+const FILTER_CONTROL_CLASS = 'h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary'
 
 export default function RulesPage() {
   const { t } = useTranslation()
@@ -287,9 +297,34 @@ export default function RulesPage() {
 
   const [sortBy, setSortBy] = useState<'priority' | 'name' | 'category'>('priority')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [search, setSearch] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
+  const [filterStatus, setFilterStatus] = useState<'' | 'active' | 'inactive'>('')
+  const [filterAction, setFilterAction] = useState('')
+
+  const hasFilters = !!(search || filterCategory || filterStatus || filterAction)
+
+  function clearFilters() {
+    setSearch('')
+    setFilterCategory('')
+    setFilterStatus('')
+    setFilterAction('')
+  }
+
+  const filteredRules = useMemo(() => {
+    const query = normalizeRuleMatchValue(search)
+    return (rulesList ?? []).filter(rule => {
+      if (query && !ruleSearchText(rule, categories).includes(query)) return false
+      if (filterCategory && !rule.actions.some(a => a.op === 'set_category' && a.value === filterCategory)) return false
+      if (filterStatus === 'active' && !rule.is_active) return false
+      if (filterStatus === 'inactive' && rule.is_active) return false
+      if (filterAction && !rule.actions.some(a => a.op === filterAction)) return false
+      return true
+    })
+  }, [rulesList, categories, search, filterCategory, filterStatus, filterAction])
 
   const sortedRules = useMemo(() => {
-    const list = [...(rulesList ?? [])]
+    const list = [...filteredRules]
     const dir = sortDir === 'asc' ? 1 : -1
     if (sortBy === 'name') {
       return list.sort((a, b) => dir * a.name.localeCompare(b.name))
@@ -304,7 +339,7 @@ export default function RulesPage() {
       return list.sort((a, b) => dir * getCategoryName(a).localeCompare(getCategoryName(b)))
     }
     return list.sort((a, b) => dir * (a.priority - b.priority))
-  }, [rulesList, categories, sortBy, sortDir])
+  }, [filteredRules, categories, sortBy, sortDir])
 
   return (
     <div>
@@ -376,7 +411,55 @@ export default function RulesPage() {
             ) : undefined
           }
         />
-        <div className="px-4 sm:px-5 py-2 bg-muted/50 border-b border-border flex items-center gap-2">
+        <div className="px-4 sm:px-5 py-2 bg-muted/50 border-b border-border flex flex-wrap items-center gap-2">
+          <div className="flex min-w-[10rem] flex-1 items-center gap-1.5">
+            <Search size={14} className="pointer-events-none shrink-0 text-muted-foreground/70" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('rules.searchPlaceholder')}
+              className="w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/75"
+            />
+          </div>
+          <select
+            className={FILTER_CONTROL_CLASS}
+            value={filterCategory}
+            onChange={(e) => setFilterCategory(e.target.value)}
+          >
+            <option value="">{t('rules.filterAllCategories')}</option>
+            {categories.map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
+          <select
+            className={FILTER_CONTROL_CLASS}
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as '' | 'active' | 'inactive')}
+          >
+            <option value="">{t('rules.filterAllStatuses')}</option>
+            <option value="active">{t('rules.filterActiveOnly')}</option>
+            <option value="inactive">{t('rules.filterInactiveOnly')}</option>
+          </select>
+          <select
+            className={FILTER_CONTROL_CLASS}
+            value={filterAction}
+            onChange={(e) => setFilterAction(e.target.value)}
+          >
+            <option value="">{t('rules.filterAllActions')}</option>
+            {ACTION_FILTERS.map(a => (
+              <option key={a.value} value={a.value}>{t(a.label)}</option>
+            ))}
+          </select>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-7 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+            >
+              {t('transactions.clearFilters')}
+            </button>
+          )}
           <span className="text-xs text-muted-foreground">{t('rules.sortLabel')}</span>
           {(['priority', 'name', 'category'] as const).map(opt => (
             <button
@@ -399,7 +482,7 @@ export default function RulesPage() {
             </button>
           ))}
         </div>
-        {rulesList && rulesList.length > 0 ? (
+        {sortedRules.length > 0 ? (
           <div className="divide-y divide-border">
             {sortedRules.map((rule) => (
               <div
@@ -447,7 +530,9 @@ export default function RulesPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground text-center py-10">{t('rules.empty')}</p>
+          <p className="text-sm text-muted-foreground text-center py-10">
+            {hasFilters ? t('rules.noFilterResults') : t('rules.empty')}
+          </p>
         )}
       </SectionCard>
 

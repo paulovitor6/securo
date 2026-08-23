@@ -846,6 +846,13 @@
     "fxEstimate": "Оцінка на основі останнього курсу ({{rate}}). Підсумкова сума може змінитися."
   },
   "rules": {
+    "searchPlaceholder": "Пошук правил...",
+    "filterAllCategories": "Усі категорії",
+    "filterAllStatuses": "Усі правила",
+    "filterActiveOnly": "Лише активні",
+    "filterInactiveOnly": "Лише неактивні",
+    "filterAllActions": "Усі дії",
+    "noFilterResults": "Жодне правило не відповідає цим фільтрам",
     "section": "Автоматизація",
     "packs": "Пакети правил",
     "packRuleCount": "{{count}} правил",
