@@ -1,7 +1,9 @@
 import json
 import logging
 import uuid
+from datetime import date as _date
 from decimal import Decimal
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
@@ -27,6 +29,7 @@ from app.schemas.asset_import import (
 from app.schemas.asset import (
     AssetBuyCreate,
     AssetCreate,
+    AssetSnapshotImportResult,
     AssetRead,
     AssetTransactionCreate,
     AssetTransactionRead,
@@ -333,6 +336,26 @@ async def buy_into_holding(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Market data provider is currently rate-limiting. Try again in a minute.",
         )
+
+
+@router.post("/import", response_model=AssetSnapshotImportResult)
+async def import_snapshot(
+    file: UploadFile = File(...),
+    group_id: Optional[uuid.UUID] = Form(None),
+    value_date: Optional[_date] = Form(None),
+    ctx: WorkspaceContext = Depends(current_writable_workspace),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Import a monthly holdings snapshot CSV (name, type, quantity, value)."""
+    content = (await file.read()).decode("utf-8-sig")
+    return await asset_service.import_snapshot(
+        session,
+        ctx.workspace.id,
+        ctx.user_id,
+        group_id,
+        content,
+        value_date or _date.today(),
+    )
 
 
 @router.get("/{asset_id}/transactions", response_model=list[AssetTransactionRead])

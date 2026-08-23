@@ -41,6 +41,7 @@ import {
   PieChart,
   AlertTriangle,
   Upload,
+  Download,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -221,6 +222,11 @@ export default function AssetsPage() {
   const [collapsedWallets, setCollapsedWallets] = useState<Set<string>>(new Set())
   // Asset being moved to a wallet (null = no picker open)
   const [movingAsset, setMovingAsset] = useState<Asset | null>(null)
+
+  // Snapshot import (CSV) dialog state — walletId is the target group_id
+  const [importWalletId, setImportWalletId] = useState<string | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importDate, setImportDate] = useState(localDateString())
 
   // Form state
   const [formName, setFormName] = useState('')
@@ -443,6 +449,22 @@ export default function AssetsPage() {
       queryClient.refetchQueries({ queryKey: ['assets'] })
       setDeletingWalletId(null)
       toast.success(t('assets.walletDeleted'))
+    },
+    onError: (e) => toast.error(assetErrorMessage(e, t('common.error'))),
+  })
+
+  const importSnapshotMutation = useMutation({
+    mutationFn: () => assets.importSnapshot(importFile!, importWalletId, importDate),
+    onSuccess: (data) => {
+      queryClient.refetchQueries({ queryKey: ['assets'] })
+      queryClient.refetchQueries({ queryKey: ['asset-groups'] })
+      setImportWalletId(null)
+      setImportFile(null)
+      if (data.errors.length > 0) {
+        toast.warning(t('assets.importPartial', { created: data.created, updated: data.updated, errors: data.errors.length }))
+      } else {
+        toast.success(t('assets.importSuccess', { created: data.created, updated: data.updated }))
+      }
     },
     onError: (e) => toast.error(assetErrorMessage(e, t('common.error'))),
   })
@@ -980,6 +1002,15 @@ export default function AssetsPage() {
           </span>
           {canWrite && (
             <>
+              {!isSynced && (
+                <button
+                  onClick={() => { setImportWalletId(wallet.id); setImportFile(null); setImportDate(localDateString()) }}
+                  className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title={t('assets.importSnapshot')}
+                >
+                  <Upload size={12} />
+                </button>
+              )}
               <button
                 onClick={() => openEditWallet(wallet)}
                 className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -1625,6 +1656,59 @@ export default function AssetsPage() {
               disabled={deleteWalletMutation.isPending}
             >
               {t('common.delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Snapshot import (CSV) */}
+      <Dialog open={!!importWalletId} onOpenChange={(open) => { if (!open) { setImportWalletId(null); setImportFile(null) } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('assets.importSnapshot')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t('assets.importSnapshotHint')}</p>
+            <button
+              type="button"
+              className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+              onClick={() => {
+                const csv = 'name,type,quantity,value\nTesouro Selic 2029,fund,10,15234.50\nApple Inc,stock,5,4200.00\n'
+                const blob = new Blob([csv], { type: 'text/csv' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = 'securo-assets-template.csv'
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              <Download size={12} />
+              {t('import.downloadTemplate')}
+            </button>
+            <div className="space-y-2">
+              <Label>{t('assets.importFile')}</Label>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-muted file:text-foreground file:text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>{t('assets.importDate')}</Label>
+              <DatePickerInput value={importDate} onChange={setImportDate} className="w-full justify-start" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setImportWalletId(null); setImportFile(null) }}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              onClick={() => importSnapshotMutation.mutate()}
+              disabled={!importFile || importSnapshotMutation.isPending}
+            >
+              {importSnapshotMutation.isPending ? t('common.loading') : t('import.title')}
             </Button>
           </DialogFooter>
         </DialogContent>

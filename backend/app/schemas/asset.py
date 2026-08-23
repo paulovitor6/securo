@@ -191,3 +191,15 @@ class AssetValueRead(BaseModel):
     source: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AssetSnapshotImportRowError(BaseModel):
+    row: int
+    message: str
+
+
+class AssetSnapshotImportResult(BaseModel):
+    created: int
+    updated: int
+    values_recorded: int
+    errors: list[AssetSnapshotImportRowError] = []

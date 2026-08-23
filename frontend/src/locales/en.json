@@ -1097,6 +1097,12 @@
     }
   },
   "assets": {
+    "importSnapshot": "Import snapshot",
+    "importSnapshotHint": "Monthly snapshot CSV with columns name, type, quantity, value — value is the total position value for that month. Existing assets are matched by name; a value already recorded for the chosen date gets updated instead of duplicated.",
+    "importFile": "CSV file",
+    "importDate": "Snapshot date",
+    "importSuccess": "{{created}} assets created, {{updated}} updated",
+    "importPartial": "{{created}} created, {{updated}} updated, {{errors}} rows skipped with errors",
     "title": "Assets",
     "addAsset": "Add Asset",
     "oversellWarning": "You only hold {{available}} units — short positions aren’t supported.",

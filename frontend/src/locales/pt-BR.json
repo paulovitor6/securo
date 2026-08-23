@@ -1097,6 +1097,12 @@
     }
   },
   "assets": {
+    "importSnapshot": "Importar snapshot",
+    "importSnapshotHint": "CSV mensal com as colunas name, type, quantity, value — value é o valor total da posição naquele mês. Ativos existentes são casados pelo nome; um valor já registrado na data escolhida é atualizado em vez de duplicado.",
+    "importFile": "Arquivo CSV",
+    "importDate": "Data do snapshot",
+    "importSuccess": "{{created}} ativos criados, {{updated}} atualizados",
+    "importPartial": "{{created}} criados, {{updated}} atualizados, {{errors}} linhas ignoradas com erro",
     "title": "Patrimônio",
     "addAsset": "Adicionar Ativo",
     "oversellWarning": "Você só possui {{available}} unidades — posições vendidas (short) não são suportadas.",

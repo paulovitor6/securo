@@ -774,6 +774,15 @@ export interface AssetImportResult {
   warnings: AssetImportWarning[]
 }
 
+/** Result of importing a holdings snapshot CSV — unrelated to the broker
+ * order import above, which reports imported orders instead. */
+export interface AssetSnapshotImportResult {
+  created: number
+  updated: number
+  values_recorded: number
+  errors: { row: number; message: string }[]
+}
+
 export interface AssetTransaction {
   id: string
   asset_id: string

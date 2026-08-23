@@ -38,6 +38,7 @@ import type {
   AssetGroup,
   AssetImportPreview,
   AssetImportResult,
+  AssetSnapshotImportResult,
   AssetOrderImport,
   AssetTransaction,
   AssetValue,
@@ -1175,6 +1176,16 @@ export const assets = {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  },
+  importSnapshot: async (file: File, groupId?: string | null, valueDate?: string): Promise<AssetSnapshotImportResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (groupId) formData.append('group_id', groupId)
+    if (valueDate) formData.append('value_date', valueDate)
+    const { data } = await api.post('/assets/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
   },
 }
 
