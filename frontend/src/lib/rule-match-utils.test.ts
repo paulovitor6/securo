@@ -18,6 +18,7 @@ const category: Category = {
   icon: '🍔',
   color: '#F59E0B',
   is_system: false,
+  is_hidden: false,
   treat_as_transfer: false,
   is_ignored: false,
 }
