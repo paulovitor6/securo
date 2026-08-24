@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { normalizeRuleMatchValue, ruleSearchText } from './rule-match-utils'
-import type { Category, Rule } from '@/types'
+import type { Category, Rule } from '../types'
 
 describe('normalizeRuleMatchValue', () => {
   it('normalizes case, whitespace, and accents for duplicate checks', () => {

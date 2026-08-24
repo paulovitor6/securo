@@ -1,5 +1,5 @@
-import { flattenConditions } from '@/lib/rule-conditions'
-import type { Category, Rule } from '@/types'
+import { flattenConditions } from './rule-conditions'
+import type { Category, Rule } from '../types'
 
 export function normalizeRuleMatchValue(value: string | number): string {
   return String(value ?? '')
