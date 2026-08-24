@@ -1241,3 +1241,47 @@ async def test_preview_rule_rejects_blank_condition_value(
         headers=auth_headers,
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flags, reason",
+    [
+        ({"is_active": False}, "an inactive rule is never applied"),
+        ({"apply_to_existing": False}, "existing transactions are left alone"),
+    ],
+)
+async def test_preview_rule_reports_no_change_when_the_draft_would_not_be_applied(
+    client: AsyncClient, auth_headers, test_categories, test_transactions, flags, reason
+):
+    """The preview forecasts saving, and these flags mean saving changes nothing.
+
+    The matches still come back — they are what the conditions select, and that
+    is worth seeing while writing the rule — but nothing is reported as
+    changing, because `apply_single_rule` would not run at all.
+    """
+    target = test_categories[0]
+    body = {
+        "conditions_op": "and",
+        "conditions": [{"field": "description", "op": "contains", "value": "NETFLIX"}],
+        "actions": [{"op": "set_category", "value": str(target.id)}],
+    }
+
+    data = (
+        await client.post("/api/rules/preview", json={**body, **flags}, headers=auth_headers)
+    ).json()
+    assert data["matched"] == 1, reason
+    assert data["will_change"] == 0
+    assert data["will_apply"] is False
+    item = data["sample"][0]
+    assert item["will_change"] is False
+    # Nothing is applied, so the row keeps the category it already has.
+    assert item["new_category_id"] == item["current_category_id"] is None
+
+    # Same draft with the flag on: the match is now a change.
+    applied = (
+        await client.post("/api/rules/preview", json=body, headers=auth_headers)
+    ).json()
+    assert applied["will_apply"] is True
+    assert applied["will_change"] == 1
+    assert applied["sample"][0]["new_category_name"] == target.name

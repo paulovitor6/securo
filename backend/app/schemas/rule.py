@@ -138,14 +138,17 @@ class RuleImportResponse(BaseModel):
 class RulePreviewRequest(BaseModel):
     """A draft rule sent from the editor, before it is saved.
 
-    Only the parts that decide what a rule matches and does are needed —
-    name/priority/active play no part in the preview, and an inactive draft is
-    still previewed so the user can check it before switching it on.
+    Carries the same save-time flags as `RuleCreate` — the preview answers
+    "what happens when I save this?", and saving an inactive rule, or one not
+    being applied to existing transactions, changes nothing right now.
+    Name and priority play no part: neither decides what a rule matches.
     """
 
     conditions_op: str = "and"
     conditions: list[RuleConditionNode]
     actions: list[RuleAction] = []
+    is_active: bool = True
+    apply_to_existing: bool = True
     overwrite_existing_categories: bool = False
     limit: int = Field(default=20, ge=1, le=100)
 
@@ -173,4 +176,8 @@ class RulePreviewItem(BaseModel):
 class RulePreviewResponse(BaseModel):
     matched: int
     will_change: int
+    # False when the draft's own flags mean saving it touches nothing now: an
+    # inactive rule, or one not being applied to existing transactions. The
+    # matches are still reported, so the conditions can be checked either way.
+    will_apply: bool
     sample: list[RulePreviewItem]

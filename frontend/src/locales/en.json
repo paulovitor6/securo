@@ -851,6 +851,8 @@
     "previewSampleNote": "showing the {{shown}} most recent",
     "previewNoChange": "no change",
     "previewEmpty": "No transaction matches these conditions",
+    "previewInactive": "rule is inactive, nothing changes yet",
+    "previewNotAppliedToExisting": "not applied to existing transactions",
     "previewError": "Could not load the preview",
     "section": "Automation",
     "packs": "Rule Packs",

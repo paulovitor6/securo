@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useMutation } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { getAccountName, sortAccountsByDisplayName } from '@/lib/account-utils'
 import { isInvalidDescriptionAction, parseRulePriority } from '@/lib/rule-form-utils'
 import { rules as rulesApi } from '@/lib/api'
@@ -207,11 +207,17 @@ function ConditionRow({
  * stale table on screen.
  */
 function RulePreviewPanel({
-  conditionsOp, conditions, actions, overwriteExistingCategories, disabled, open, onOpenChange,
+  conditionsOp, conditions, actions, isActive, applyToExisting, overwriteExistingCategories,
+  disabled, open, onOpenChange,
 }: {
   conditionsOp: 'and' | 'or'
   conditions: RuleConditionNode[]
   actions: RuleAction[]
+  // The save-time flags go to the backend too: an inactive rule, or one not
+  // being applied to existing transactions, changes nothing when saved, and
+  // the preview has to say so rather than promise changes that won't happen.
+  isActive: boolean
+  applyToExisting: boolean
   overwriteExistingCategories: boolean
   disabled: boolean
   // Open state lives in the parent: the dialog widens while the table is
@@ -224,20 +230,33 @@ function RulePreviewPanel({
   const dateLocale = useDateLocale()
   const { mask } = usePrivacyMode()
 
-  const preview = useMutation({
-    mutationFn: () => rulesApi.preview({
+  // Keyed on the whole draft, so flipping a flag refetches while the panel
+  // stays open — and a slower response for a previous draft can never land on
+  // top of the current one.
+  const preview = useQuery({
+    queryKey: [
+      'rule-preview', conditionsOp, conditions, actions,
+      isActive, applyToExisting, overwriteExistingCategories,
+    ],
+    queryFn: () => rulesApi.preview({
       conditions_op: conditionsOp,
       conditions,
       actions,
+      is_active: isActive,
+      apply_to_existing: applyToExisting,
       overwrite_existing_categories: overwriteExistingCategories,
     }),
+    enabled: open,
+    staleTime: Infinity,
+    gcTime: 0,
   })
 
-  const { reset } = preview
+  // Editing the rule itself collapses the panel rather than leaving a table
+  // that describes a draft the user has moved on from. The flags don't: their
+  // whole point is watching the numbers move.
   useEffect(() => {
     onOpenChange(false)
-    reset()
-  }, [conditionsOp, conditions, actions, overwriteExistingCategories, onOpenChange, reset])
+  }, [conditionsOp, conditions, actions, onOpenChange])
 
   const data = preview.data
 
@@ -248,10 +267,7 @@ function RulePreviewPanel({
         disabled={disabled}
         aria-expanded={open}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
-        onClick={() => {
-          onOpenChange(!open)
-          if (!open && !data && !preview.isPending) preview.mutate()
-        }}
+        onClick={() => onOpenChange(!open)}
       >
         <span className="flex items-center gap-1.5 font-medium">
           <Eye size={13} /> {t('rules.preview')}
@@ -264,16 +280,23 @@ function RulePreviewPanel({
 
       {open && (
         <div className="border-t border-border p-3">
-          {preview.isPending ? (
-            <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
-          ) : preview.isError ? (
+          {preview.isError ? (
             <p className="text-xs text-rose-500">{t('rules.previewError')}</p>
-          ) : !data || data.matched === 0 ? (
+          ) : /* also while a flag change is being recomputed: the old numbers
+                 no longer describe the flags now on screen */
+          !data || preview.isFetching ? (
+            <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
+          ) : data.matched === 0 ? (
             <p className="text-xs text-muted-foreground">{t('rules.previewEmpty')}</p>
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
                 {t('rules.previewSummary', { matched: data.matched, changed: data.will_change })}
+                {!data.will_apply && (
+                  <> · <span className="font-medium text-amber-600 dark:text-amber-400">
+                    {isActive ? t('rules.previewNotAppliedToExisting') : t('rules.previewInactive')}
+                  </span></>
+                )}
                 {data.sample.length < data.matched && (
                   <> · {t('rules.previewSampleNote', { shown: data.sample.length })}</>
                 )}
@@ -711,7 +734,9 @@ export function RuleDialog({
             conditionsOp={conditionsOp}
             conditions={conditions}
             actions={actions}
-            overwriteExistingCategories={applyToExisting && overwriteExistingCategories}
+            isActive={isActive}
+            applyToExisting={applyToExisting}
+            overwriteExistingCategories={overwriteExistingCategories}
             disabled={hasBlankCondition || conditions.length === 0}
             open={previewOpen}
             onOpenChange={setPreviewOpen}

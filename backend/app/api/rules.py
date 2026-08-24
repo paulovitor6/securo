@@ -125,6 +125,8 @@ async def preview_rule(
             data.conditions_op,
             [c.model_dump() for c in data.conditions],
             [a.model_dump() for a in data.actions],
+            is_active=data.is_active,
+            apply_to_existing=data.apply_to_existing,
             overwrite_existing_categories=data.overwrite_existing_categories,
             limit=data.limit,
         )

@@ -851,6 +851,8 @@
     "previewSampleNote": "mostrando las {{shown}} más recientes",
     "previewNoChange": "sin cambios",
     "previewEmpty": "Ninguna transacción coincide con estas condiciones",
+    "previewInactive": "la regla está inactiva, aún no cambia nada",
+    "previewNotAppliedToExisting": "no se aplica a las transacciones existentes",
     "previewError": "No se pudo cargar la vista previa",
     "section": "Automatización",
     "packs": "Paquetes de reglas",

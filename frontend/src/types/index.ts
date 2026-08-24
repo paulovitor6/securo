@@ -501,6 +501,9 @@ export interface RulePreviewItem {
 export interface RulePreviewResponse {
   matched: number
   will_change: number
+  /** False when the draft's flags mean saving it changes nothing right now —
+   * an inactive rule, or one not being applied to existing transactions. */
+  will_apply: boolean
   /** The most recent matches, capped by the requested limit. */
   sample: RulePreviewItem[]
 }

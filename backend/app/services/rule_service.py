@@ -1210,6 +1210,8 @@ async def preview_rule(
     conditions_op: str,
     conditions: list,
     actions: list,
+    is_active: bool = True,
+    apply_to_existing: bool = True,
     overwrite_existing_categories: bool = False,
     limit: int = 20,
 ) -> RulePreviewResponse:
@@ -1219,7 +1221,15 @@ async def preview_rule(
     engine, same overwrite semantics — so the table the editor shows is exactly
     what saving the rule would produce. Returns the full match/change counts
     plus the `limit` most recent matches as a sample.
+
+    That means honouring the two gates the save path applies before any rule
+    touches history: `apply_single_rule` does nothing for an inactive rule, and
+    the create/update endpoints only call it when `apply_to_existing` is set.
+    With either off, the matches are still listed — they are what the
+    conditions select, which is worth seeing — but nothing is reported as
+    changing, because saving would change nothing.
     """
+    will_apply = is_active and apply_to_existing
     await _validate_rule_definition(session, workspace_id, conditions, [])
 
     result = await session.execute(
@@ -1256,18 +1266,22 @@ async def preview_rule(
         if not matches:
             continue
         matched += 1
+        # An untouched copy when nothing is applied, so `new_category_*` below
+        # simply mirrors what the transaction already has.
         draft = _rule_preview(tx)
-        before = _rule_effect_state(draft)
-        apply_rule_actions(
-            action_dicts,
-            draft,
-            category_already_set=tx.category_id is not None
-            and not overwrite_existing_categories,
-            skip_description=_has_manual_description(tx),
-        )
-        will_change = _rule_effect_state(draft) != before
-        if will_change:
-            changed += 1
+        will_change = False
+        if will_apply:
+            before = _rule_effect_state(draft)
+            apply_rule_actions(
+                action_dicts,
+                draft,
+                category_already_set=tx.category_id is not None
+                and not overwrite_existing_categories,
+                skip_description=_has_manual_description(tx),
+            )
+            will_change = _rule_effect_state(draft) != before
+            if will_change:
+                changed += 1
         if len(sample) < limit:
             sample.append(
                 RulePreviewItem(
@@ -1285,7 +1299,9 @@ async def preview_rule(
                 )
             )
 
-    return RulePreviewResponse(matched=matched, will_change=changed, sample=sample)
+    return RulePreviewResponse(
+        matched=matched, will_change=changed, will_apply=will_apply, sample=sample
+    )
 
 
 async def apply_single_rule(

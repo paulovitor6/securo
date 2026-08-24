@@ -857,6 +857,8 @@
     "previewSampleNote": "показано {{shown}} найновіших",
     "previewNoChange": "без змін",
     "previewEmpty": "Жодна транзакція не відповідає цим умовам",
+    "previewInactive": "правило неактивне, поки нічого не зміниться",
+    "previewNotAppliedToExisting": "не застосовується до наявних транзакцій",
     "previewError": "Не вдалося завантажити попередній перегляд",
     "section": "Автоматизація",
     "packs": "Пакети правил",

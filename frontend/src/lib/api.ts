@@ -913,6 +913,8 @@ export const rules = {
     conditions_op: 'and' | 'or'
     conditions: RuleConditionNode[]
     actions: RuleAction[]
+    is_active?: boolean
+    apply_to_existing?: boolean
     overwrite_existing_categories?: boolean
     limit?: number
   }): Promise<RulePreviewResponse> => {

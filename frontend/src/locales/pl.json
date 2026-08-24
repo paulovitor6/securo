@@ -902,6 +902,8 @@
     "previewSampleNote": "pokazano {{shown}} najnowszych",
     "previewNoChange": "bez zmian",
     "previewEmpty": "Żadna transakcja nie spełnia tych warunków",
+    "previewInactive": "reguła jest nieaktywna, nic się jeszcze nie zmieni",
+    "previewNotAppliedToExisting": "nie zostanie zastosowana do istniejących transakcji",
     "previewError": "Nie udało się wczytać podglądu",
     "section": "Automatyzacja",
     "packs": "Pakiety reguł",
