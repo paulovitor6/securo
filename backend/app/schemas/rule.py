@@ -151,6 +151,10 @@ class RulePreviewRequest(BaseModel):
     apply_to_existing: bool = True
     overwrite_existing_categories: bool = False
     limit: int = Field(default=20, ge=1, le=100)
+    # The sample is a window over the matches, newest first. Counts are exact
+    # whatever the window is, so the editor pages through a broad rule's
+    # matches instead of judging it by the first screenful.
+    offset: int = Field(default=0, ge=0)
 
 
 class RulePreviewItem(BaseModel):
@@ -180,4 +184,8 @@ class RulePreviewResponse(BaseModel):
     # inactive rule, or one not being applied to existing transactions. The
     # matches are still reported, so the conditions can be checked either way.
     will_apply: bool
+    # The requested window of the matches — `offset` through `offset + limit`,
+    # newest first. Compare `offset + len(sample)` with `matched` to know
+    # whether more can be fetched.
     sample: list[RulePreviewItem]
+    offset: int = 0

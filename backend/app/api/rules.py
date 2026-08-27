@@ -129,6 +129,7 @@ async def preview_rule(
             apply_to_existing=data.apply_to_existing,
             overwrite_existing_categories=data.overwrite_existing_categories,
             limit=data.limit,
+            offset=data.offset,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

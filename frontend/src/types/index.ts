@@ -511,8 +511,10 @@ export interface RulePreviewResponse {
   /** False when the draft's flags mean saving it changes nothing right now —
    * an inactive rule, or one not being applied to existing transactions. */
   will_apply: boolean
-  /** The most recent matches, capped by the requested limit. */
+  /** One window of the matches, newest first: `offset` through
+   * `offset + limit`. More remain while `offset + sample.length < matched`. */
   sample: RulePreviewItem[]
+  offset: number
 }
 
 export interface ImportLog {

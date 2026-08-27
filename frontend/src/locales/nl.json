@@ -852,6 +852,7 @@
     "previewMatched": "{{matched}} overeenkomsten",
     "previewSummary": "{{matched}} overeenkomende transacties · {{changed}} zouden wijzigen",
     "previewSampleNote": "de {{shown}} meest recente worden getoond",
+    "previewLoadMore": "{{more}} meer laden",
     "previewNoChange": "geen wijziging",
     "previewEmpty": "Geen transactie voldoet aan deze voorwaarden",
     "previewInactive": "regel is inactief, er wijzigt nog niets",

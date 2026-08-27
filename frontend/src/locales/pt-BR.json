@@ -852,6 +852,7 @@
     "previewMatched": "{{matched}} correspondências",
     "previewSummary": "{{matched}} transações correspondem · {{changed}} seriam alteradas",
     "previewSampleNote": "mostrando as {{shown}} mais recentes",
+    "previewLoadMore": "Carregar mais {{more}}",
     "previewNoChange": "sem alteração",
     "previewEmpty": "Nenhuma transação corresponde a estas condições",
     "previewInactive": "regra inativa, nada muda por enquanto",

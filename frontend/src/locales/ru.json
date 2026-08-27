@@ -858,6 +858,7 @@
     "previewMatched": "совпадений: {{matched}}",
     "previewSummary": "подходящих транзакций: {{matched}} · изменится: {{changed}}",
     "previewSampleNote": "показаны {{shown}} последних",
+    "previewLoadMore": "Загрузить ещё {{more}}",
     "previewNoChange": "без изменений",
     "previewEmpty": "Ни одна транзакция не подходит под эти условия",
     "previewInactive": "правило неактивно, пока ничего не изменится",

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { getAccountName, sortAccountsByDisplayName } from '@/lib/account-utils'
-import { isInvalidDescriptionAction, parseRulePriority } from '@/lib/rule-form-utils'
+import { isInvalidDescriptionAction, parseRulePriority, previewableActions } from '@/lib/rule-form-utils'
 import { rules as rulesApi } from '@/lib/api'
 import { formatCurrency } from '@/lib/format'
 import { useDisplayLocale, useDateLocale } from '@/hooks/use-display-locale'
@@ -198,13 +198,21 @@ function ConditionRow({
   )
 }
 
+/** Rows per preview request. Each one re-evaluates the whole ledger, so the
+ * page is large enough that reading through a broad rule's matches is a few
+ * requests rather than dozens. The API caps it at 100. */
+const PREVIEW_PAGE_SIZE = 50
+
 /** Collapsible "what would this rule do?" panel.
  *
  * Matching runs on the backend against the same engine that applies rules, so
  * the table shows exactly what saving the draft would produce — including the
  * transactions it matches but leaves untouched because they already have a
- * category. Any edit to the draft collapses the panel rather than leaving a
- * stale table on screen.
+ * category. The counts cover every match; the table is one window of them at a
+ * time, so a broad rule — the kind this panel exists to catch before it is
+ * saved — can be read through rather than judged by its first screenful. Any
+ * edit to the draft collapses the panel rather than leaving a stale table on
+ * screen.
  */
 function RulePreviewPanel({
   conditionsOp, conditions, actions, isActive, applyToExisting, overwriteExistingCategories,
@@ -230,22 +238,36 @@ function RulePreviewPanel({
   const dateLocale = useDateLocale()
   const { mask } = usePrivacyMode()
 
+  // A half-filled action row is a draft in progress, not a rule to reject, so
+  // it is left out of the request the backend validates.
+  const draftActions = useMemo(() => previewableActions(actions), [actions])
+
   // Keyed on the whole draft, so flipping a flag refetches while the panel
   // stays open — and a slower response for a previous draft can never land on
-  // top of the current one.
-  const preview = useQuery({
+  // top of the current one. Paged, because a rule matching four figures of
+  // transactions is one worth reading past the first page of.
+  const preview = useInfiniteQuery({
     queryKey: [
-      'rule-preview', conditionsOp, conditions, actions,
+      'rule-preview', conditionsOp, conditions, draftActions,
       isActive, applyToExisting, overwriteExistingCategories,
     ],
-    queryFn: () => rulesApi.preview({
+    queryFn: ({ pageParam }) => rulesApi.preview({
       conditions_op: conditionsOp,
       conditions,
-      actions,
+      actions: draftActions,
       is_active: isActive,
       apply_to_existing: applyToExisting,
       overwrite_existing_categories: overwriteExistingCategories,
+      limit: PREVIEW_PAGE_SIZE,
+      offset: pageParam,
     }),
+    initialPageParam: 0,
+    // The counts are exact whatever window came back, so what is already on
+    // screen is the offset of the next page.
+    getNextPageParam: (lastPage, pages) => {
+      const shown = pages.reduce((total, page) => total + page.sample.length, 0)
+      return shown < lastPage.matched ? shown : undefined
+    },
     enabled: open,
     staleTime: Infinity,
     gcTime: 0,
@@ -258,7 +280,12 @@ function RulePreviewPanel({
     onOpenChange(false)
   }, [conditionsOp, conditions, actions, onOpenChange])
 
-  const data = preview.data
+  // Every page carries the same counts; the rows accumulate.
+  const data = preview.data?.pages[0]
+  const sample = useMemo(
+    () => preview.data?.pages.flatMap(page => page.sample) ?? [],
+    [preview.data],
+  )
 
   return (
     <div className="rounded-lg border border-border">
@@ -283,8 +310,10 @@ function RulePreviewPanel({
           {preview.isError ? (
             <p className="text-xs text-rose-500">{t('rules.previewError')}</p>
           ) : /* also while a flag change is being recomputed: the old numbers
-                 no longer describe the flags now on screen */
-          !data || preview.isFetching ? (
+                 no longer describe the flags now on screen. Fetching a further
+                 page is not that — those rows are appended to a table that is
+                 still current. */
+          !data || (preview.isFetching && !preview.isFetchingNextPage) ? (
             <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
           ) : data.matched === 0 ? (
             <p className="text-xs text-muted-foreground">{t('rules.previewEmpty')}</p>
@@ -297,8 +326,8 @@ function RulePreviewPanel({
                     {isActive ? t('rules.previewNotAppliedToExisting') : t('rules.previewInactive')}
                   </span></>
                 )}
-                {data.sample.length < data.matched && (
-                  <> · {t('rules.previewSampleNote', { shown: data.sample.length })}</>
+                {sample.length < data.matched && (
+                  <> · {t('rules.previewSampleNote', { shown: sample.length })}</>
                 )}
               </p>
               <div className="max-h-56 overflow-y-auto overflow-x-auto">
@@ -312,7 +341,7 @@ function RulePreviewPanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {data.sample.map(item => (
+                    {sample.map(item => (
                       <tr key={item.id} className={cn(!item.will_change && 'text-muted-foreground')}>
                         <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums">
                           {new Date(item.date + 'T00:00:00').toLocaleDateString(dateLocale)}
@@ -353,6 +382,20 @@ function RulePreviewPanel({
                   </tbody>
                 </table>
               </div>
+              {preview.hasNextPage && (
+                <button
+                  type="button"
+                  className="w-full rounded-md border border-border py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={preview.isFetchingNextPage}
+                  onClick={() => preview.fetchNextPage()}
+                >
+                  {preview.isFetchingNextPage
+                    ? t('common.loading')
+                    : t('rules.previewLoadMore', {
+                        more: Math.min(PREVIEW_PAGE_SIZE, data.matched - sample.length),
+                      })}
+                </button>
+              )}
             </div>
           )}
         </div>

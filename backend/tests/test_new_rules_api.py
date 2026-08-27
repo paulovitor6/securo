@@ -1228,6 +1228,84 @@ async def test_preview_rule_honors_condition_groups_and_sample_limit(
 
 
 @pytest.mark.asyncio
+async def test_preview_rule_pages_through_the_matches(
+    client: AsyncClient, auth_headers, test_categories, test_transactions
+):
+    """Every match is reachable, one window at a time.
+
+    A rule matching four figures of transactions is exactly the one worth
+    inspecting, so the sample has to be pageable rather than a fixed first
+    screenful. The windows tile the match list without gaps or repeats, and
+    the counts stay exact whichever window is asked for.
+    """
+    body = {
+        "conditions_op": "and",
+        "conditions": [{"field": "amount", "op": "gt", "value": "0"}],
+        "actions": [{"op": "set_category", "value": str(test_categories[0].id)}],
+        "limit": 2,
+    }
+
+    seen: list[str] = []
+    for offset in (0, 2, 4):
+        data = (
+            await client.post(
+                "/api/rules/preview",
+                json={**body, "offset": offset},
+                headers=auth_headers,
+            )
+        ).json()
+        assert data["matched"] == len(test_transactions)
+        assert data["offset"] == offset
+        seen.extend(item["id"] for item in data["sample"])
+
+    # Three windows of two over five matches: 2 + 2 + 1, every row once.
+    assert len(seen) == len(set(seen)) == len(test_transactions)
+    assert set(seen) == {str(tx.id) for tx in test_transactions}
+
+    # Past the end is empty, not an error — the counts still come back.
+    past_end = (
+        await client.post(
+            "/api/rules/preview",
+            json={**body, "offset": len(test_transactions)},
+            headers=auth_headers,
+        )
+    ).json()
+    assert past_end["matched"] == len(test_transactions)
+    assert past_end["sample"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action, detail",
+    [
+        ({"op": "set_category", "value": "not-a-uuid"}, "Category not found"),
+        ({"op": "set_payee", "value": str(uuid.uuid4())}, "Payee not found"),
+        ({"op": "set_description", "value": "   "}, "Description cannot be blank"),
+    ],
+)
+async def test_preview_rule_validates_actions_like_the_save_path(
+    client: AsyncClient, auth_headers, test_transactions, action, detail
+):
+    """The preview runs the draft's actions, so it has to vet them first.
+
+    Otherwise a malformed action reaches `apply_rule_actions` unvalidated and
+    the preview quietly reports the no-op it degrades into, rather than the
+    error the same draft would raise on save.
+    """
+    response = await client.post(
+        "/api/rules/preview",
+        json={
+            "conditions_op": "and",
+            "conditions": [{"field": "description", "op": "contains", "value": "UBER"}],
+            "actions": [action],
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+
+
+@pytest.mark.asyncio
 async def test_preview_rule_rejects_blank_condition_value(
     client: AsyncClient, auth_headers, test_categories
 ):

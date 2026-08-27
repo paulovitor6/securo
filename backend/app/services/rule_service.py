@@ -4,6 +4,7 @@ from typing import Any, Optional, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.models.rule import Rule
 from app.models.category import Category
@@ -1106,6 +1107,31 @@ async def _get_existing_rule_names_for_workspace(
     return {row[0] for row in result.all()}
 
 
+# Exactly the columns `_rule_preview` copies. Anything reading a column that is
+# not here off a transaction loaded with `load_only(*_PREVIEW_COLUMNS)` would
+# trigger a lazy refresh — which raises under async — so the two lists move
+# together.
+_PREVIEW_COLUMNS = (
+    Transaction.user_id,
+    Transaction.workspace_id,
+    Transaction.account_id,
+    Transaction.category_id,
+    Transaction.description,
+    Transaction.original_description,
+    Transaction.description_is_rule_managed,
+    Transaction.amount,
+    Transaction.currency,
+    Transaction.date,
+    Transaction.type,
+    Transaction.source,
+    Transaction.status,
+    Transaction.payee,
+    Transaction.payee_id,
+    Transaction.notes,
+    Transaction.is_ignored,
+)
+
+
 def _rule_preview(transaction: Transaction) -> Transaction:
     """Build a detached transaction-shaped object for side-effect-free rule evaluation."""
     return Transaction(
@@ -1227,13 +1253,17 @@ async def preview_rule(
     apply_to_existing: bool = True,
     overwrite_existing_categories: bool = False,
     limit: int = 20,
+    offset: int = 0,
 ) -> RulePreviewResponse:
     """Report which existing transactions an unsaved rule would match.
 
     Read-only counterpart of `apply_single_rule`: same transaction scope, same
     engine, same overwrite semantics — so the table the editor shows is exactly
     what saving the rule would produce. Returns the full match/change counts
-    plus the `limit` most recent matches as a sample.
+    plus one window of the matches — `limit` of them from `offset`, newest
+    first — so a rule matching thousands of rows can be paged through rather
+    than judged by its first screenful. Every match is evaluated whatever the
+    window is, which is what keeps the counts exact.
 
     That means honouring the two gates the save path applies before any rule
     touches history: `apply_single_rule` does nothing for an inactive rule, and
@@ -1243,15 +1273,23 @@ async def preview_rule(
     changing, because saving would change nothing.
     """
     will_apply = is_active and apply_to_existing
-    await _validate_rule_definition(session, workspace_id, conditions, [])
+    await _validate_rule_definition(session, workspace_id, conditions, actions or [])
 
+    # Every transaction is evaluated in Python, so only the columns the engine
+    # reads and `_rule_preview` copies are worth fetching — notably not
+    # `raw_data`, whose provider payloads dwarf the rest of the row and which
+    # no condition or action can see.
     result = await session.execute(
         select(Transaction)
+        .options(load_only(*_PREVIEW_COLUMNS))
         .where(
             Transaction.workspace_id == workspace_id,
             Transaction.source != "opening_balance",
         )
-        .order_by(Transaction.date.desc())
+        # `id` breaks date ties, so the match list is in the same order for
+        # every window: without a total order two rows sharing a date could
+        # swap between requests and be shown twice, or skipped, while paging.
+        .order_by(Transaction.date.desc(), Transaction.id.desc())
     )
     transactions = result.scalars().all()
 
@@ -1295,7 +1333,9 @@ async def preview_rule(
             will_change = _rule_effect_state(draft) != before
             if will_change:
                 changed += 1
-        if len(sample) < limit:
+        # `matched` has just counted this row, so `matched - 1` is its index
+        # in the match list the window is cut from.
+        if offset <= matched - 1 < offset + limit:
             sample.append(
                 RulePreviewItem(
                     id=tx.id,
@@ -1313,7 +1353,11 @@ async def preview_rule(
             )
 
     return RulePreviewResponse(
-        matched=matched, will_change=changed, will_apply=will_apply, sample=sample
+        matched=matched,
+        will_change=changed,
+        will_apply=will_apply,
+        sample=sample,
+        offset=offset,
     )
 
 
