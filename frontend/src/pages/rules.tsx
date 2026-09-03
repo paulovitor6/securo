@@ -332,14 +332,18 @@ export default function RulesPage() {
   const filteredRules = useMemo(() => {
     const query = normalizeRuleMatchValue(search)
     return (rulesList ?? []).filter(rule => {
-      if (query && !ruleSearchText(rule, categories).includes(query)) return false
+      // displayCategories, not categories: the row and the sort already read
+      // from it, so a rule assigning a hidden category shows that name.
+      // Searching over the visible-only list made that rule unfindable by the
+      // very name on screen.
+      if (query && !ruleSearchText(rule, displayCategories).includes(query)) return false
       if (filterCategory && !rule.actions.some(a => a.op === 'set_category' && a.value === filterCategory)) return false
       if (filterStatus === 'active' && !rule.is_active) return false
       if (filterStatus === 'inactive' && rule.is_active) return false
       if (filterAction && !rule.actions.some(a => a.op === filterAction)) return false
       return true
     })
-  }, [rulesList, categories, search, filterCategory, filterStatus, filterAction])
+  }, [rulesList, displayCategories, search, filterCategory, filterStatus, filterAction])
 
   const sortedRules = useMemo(() => {
     const list = [...filteredRules]
@@ -434,7 +438,7 @@ export default function RulesPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t('rules.searchPlaceholder')}
-              className="w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/75"
+              className="w-full min-w-0 rounded-sm bg-transparent text-xs text-foreground focus:outline-none focus-visible:ring-ring/30 focus-visible:ring-[2px] placeholder:text-muted-foreground/75"
             />
           </div>
           <select
@@ -443,7 +447,9 @@ export default function RulesPage() {
             onChange={(e) => setFilterCategory(e.target.value)}
           >
             <option value="">{t('rules.filterAllCategories')}</option>
-            {categories.map(cat => (
+            {/* displayCategories so a rule assigning a hidden category is
+                still filterable by it, matching what the row displays. */}
+            {displayCategories.map(cat => (
               <option key={cat.id} value={cat.id}>{cat.name}</option>
             ))}
           </select>
